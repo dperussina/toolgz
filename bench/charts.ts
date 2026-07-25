@@ -162,10 +162,13 @@ function chartReduction(rows: Row[], t: Theme): string {
   const cols = 2;
   const rowsN = Math.ceil(providers.length / cols);
   const W = padX * 2 + cols * panelW + (cols - 1) * 26;
-  const H = 78 + rowsN * (panelH + titleH) + 48;
+  const H = 78 + rowsN * (panelH + titleH) + 62;
 
   const parts: string[] = [];
   parts.push(
+    `<defs><pattern id="hatch-${t.surface.slice(1)}" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">` +
+      `<rect width="6" height="6" fill="${t.warn}" opacity="0.30"/>` +
+      `<line x1="0" y1="0" x2="0" y2="6" stroke="${t.warn}" stroke-width="3"/></pattern></defs>`,
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
     `<text x="${padX}" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Prompt tokens saved vs. uncompressed tool definitions</text>`,
     wrapText(
@@ -203,17 +206,32 @@ function chartReduction(rows: Row[], t: Theme): string {
       }
     }
 
+    let anyIncomplete = false;
     arms.forEach((arm, j) => {
-      const v = mean(pr.filter((r) => r.arm === arm).map((r) => r.totalPromptTokens));
+      const rs = pr.filter((r) => r.arm === arm);
+      const v = mean(rs.map((r) => r.totalPromptTokens));
       const red = base ? Math.max(0, ((base - v) / base) * 100) : 0;
       const y = cy + 20 + j * (barH + gap);
       const w = Math.max(1, (plotW * red) / 100);
+
+      // An arm that did not finish every task must not read as a clean win here.
+      // Hatched fill + a dagger, so the caveat travels with the bar rather than
+      // living only in a different chart.
+      const ok = rs.filter((r) => r.taskSuccess).length;
+      const incomplete = rs.length > 0 && ok < rs.length;
+      if (incomplete) anyIncomplete = true;
+
       parts.push(
-        `<text x="${plotX - 9}" y="${y + barH - 3.5}" font-family="${FONT}" font-size="11.5" fill="${t.ink2}" text-anchor="end">${esc(ARM_LABEL[arm] ?? arm)}</text>`,
-        `<rect x="${plotX}" y="${y}" width="${w}" height="${barH}" rx="4" fill="${t.series}"/>`,
-        `<text x="${plotX + w + 7}" y="${y + barH - 3.5}" font-family="${FONT}" font-size="11.5" font-weight="600" fill="${t.ink}">${red.toFixed(0)}%</text>`,
+        `<text x="${plotX - 9}" y="${y + barH - 3.5}" font-family="${FONT}" font-size="11.5" fill="${t.ink2}" text-anchor="end">${esc(ARM_LABEL[arm] ?? arm)}${incomplete ? " †" : ""}</text>`,
+        `<rect x="${plotX}" y="${y}" width="${w}" height="${barH}" rx="4" fill="${incomplete ? `url(#hatch-${t.surface.slice(1)})` : t.series}"/>`,
+        `<text x="${plotX + w + 7}" y="${y + barH - 3.5}" font-family="${FONT}" font-size="11.5" font-weight="600" fill="${incomplete ? t.warn : t.ink}">${red.toFixed(0)}%${incomplete ? ` (${ok}/${rs.length})` : ""}</text>`,
       );
     });
+    if (anyIncomplete) {
+      parts.push(
+        `<text x="${cx}" y="${cy + 52 + arms.length * (barH + gap)}" font-family="${FONT}" font-size="10" fill="${t.warn}">† did not complete every task — see the reliability chart</text>`,
+      );
+    }
   });
 
   parts.push(

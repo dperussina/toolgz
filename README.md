@@ -213,4 +213,11 @@ npx tsx docs/generate-examples.ts
 Methodology and repo conventions: [AGENTS.md](AGENTS.md).
 Principles specs are checked against: [.specify/memory/constitution.md](.specify/memory/constitution.md).
 
-MIT
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Apache-2.0 rather than MIT deliberately: it carries an express patent grant and
+a patent-retaliation clause, which matters for a library implementing a
+technique rather than just glue code, and it is the license most enterprises
+prefer in a dependency.
