@@ -1,20 +1,30 @@
 /**
- * The five arms.
+ * Benchmark arms.
  *
- * Deliberately a factorial ladder so each variable is isolated:
+ * ══ READ THIS BEFORE ADDING AN ARM ══
  *
- *   arm         L0 schema-flatten   L1 progressive   ns-collapse   minify
- *   control            -                  -               -           -
- *   signatures         Y                  -               -           -
- *   native             -                  Y (native)      -           -
- *   hybrid             Y                  Y (custom)      Y           -
- *   minified           Y                  Y (custom)      Y           Y
+ * Every arm that corresponds to a library feature is a THIN WRAPPER over
+ * `compress()` from `src/`. It must not reimplement compression logic.
  *
- * This is a change from the first AGENTS.md sketch, which had `signatures`
- * doing L0+L1. Splitting them is what makes the result attributable: without
- * it we cannot tell whether a win came from flattening schemas or from
- * deferring them.
+ * This rule exists because it was broken once and cost us a result. An earlier
+ * version of this file had its own level-3 implementation whose map lines were
+ * terse prose descriptors, while `src/` shipped bare tool names. The 150-run
+ * Anthropic sweep therefore validated a configuration the library did not ship
+ * — the benchmark and the product had silently diverged. Two implementations of
+ * one idea can only diverge; the fix is to have one implementation.
+ *
+ * If you want to benchmark a variation, add an OPTION to the library and wrap
+ * it here (see `minifiedTerse` / `minifiedPlus` and `CompressOptions.mapStyle`).
+ * Then a winning experiment ships by changing a default, not by porting code.
+ *
+ * `native` is the one legitimate exception: it is Anthropic's server-side tool
+ * search, a competitive baseline rather than a library feature, so there is
+ * nothing in `src/` for it to wrap.
+ *
+ * tests/parity.test.ts enforces the wrapper property.
  */
+import { compress } from "../../src/index.js";
+import type { MapStyle } from "../../src/types.js";
 import type {
   CompressionStrategy,
   CompiledRequest,
@@ -22,134 +32,111 @@ import type {
   Resolution,
 } from "../core/types.js";
 
-// ---------------------------------------------------------------------------
-// shared rendering helpers
-// ---------------------------------------------------------------------------
+/** Re-exported so bench code shares the library's renderers, never a copy. */
+export {
+  signatureLine as signature,
+  flattenSchema,
+} from "../../src/render/index.js";
 
-/** `name(req*, opt?)` — the L0 signature line. */
-export function signature(t: ToolDef, name = t.name): string {
-  const props = t.input_schema.properties ?? {};
-  const req = new Set(t.input_schema.required ?? []);
-  const params = Object.entries(props).map(([k, v]: [string, any]) => {
-    const opt = req.has(k) ? "" : "?";
-    const en = v.enum ? `:${v.enum.join("|")}` : "";
-    return `${k}${opt}${en}`;
-  });
-  return `${name}(${params.join(",")})`;
-}
+type LibOpts = { level: 0 | 1 | 2 | 3; mapStyle?: MapStyle };
 
-/** Schema with per-property descriptions and JSON Schema boilerplate stripped. */
-export function flattenSchema(t: ToolDef) {
-  const props = t.input_schema.properties ?? {};
-  const out: Record<string, any> = {};
-  for (const [k, v] of Object.entries(props) as [string, any][]) {
-    const p: any = { type: v.type };
-    if (v.enum) p.enum = v.enum;
-    if (v.items) p.items = v.items;
-    out[k] = p;
-  }
+/**
+ * Wrap a library configuration as an arm.
+ *
+ * `compress()` is pure and cheap, but it is called on every resolve, so the
+ * result is memoised per tool-array identity to keep the run loop tight.
+ */
+function fromLibrary(
+  id: string,
+  label: string,
+  opts: LibOpts,
+): CompressionStrategy {
+  const cache = new WeakMap<object, ReturnType<typeof compress>>();
+  const get = (tools: ToolDef[]) => {
+    let c = cache.get(tools as unknown as object);
+    if (!c) {
+      c = compress(tools as any, opts);
+      cache.set(tools as unknown as object, c);
+    }
+    return c;
+  };
+
   return {
-    type: "object",
-    properties: out,
-    required: t.input_schema.required ?? [],
+    id,
+    label,
+    compile(tools): CompiledRequest {
+      const c = get(tools);
+      return {
+        tools: c.tools as any[],
+        systemPreamble: c.systemPreamble,
+        cachePreamble: c.cachePreamble,
+      };
+    },
+    resolve(tools, rawName, rawArgs): Resolution {
+      const r = get(tools).resolve(rawName, rawArgs);
+      // Library errors carry `recoverable`; the bench Resolution does not use it.
+      if (r.kind === "error") return { kind: "error", message: r.message };
+      return r;
+    },
   };
 }
 
-function firstSentence(s: string): string {
-  const i = s.indexOf(".");
-  return i === -1 ? s : s.slice(0, i);
-}
+// ── the four portable arms, each a library level ────────────────────────────
 
-/** Terse descriptor: drops articles and boilerplate, keeps the semantics. */
-function terse(s: string): string {
-  return firstSentence(s)
-    .replace(/^(Get|Retrieve|Fetch) (details of |the |a |an )?/i, "get ")
-    .replace(/\b(the|a|an|to|of|for|in|with|and)\b ?/gi, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
+export const control = fromLibrary("control", "Arm 0 · uncompressed", {
+  level: 0,
+});
 
-function findTool(tools: ToolDef[], name: string): ToolDef | undefined {
-  return tools.find((t) => t.name === name);
-}
+export const signatures = fromLibrary(
+  "signatures",
+  "Arm C · signature lines (L0)",
+  { level: 1 },
+);
 
-/** Validate args against the real schema — the middleware safety net. */
-export function validate(
-  t: ToolDef,
-  args: Record<string, any>,
-): string | null {
-  const req = t.input_schema.required ?? [];
-  const props = t.input_schema.properties ?? {};
-  for (const r of req) {
-    if (args[r] === undefined || args[r] === null) {
-      return `missing required parameter "${r}" for ${t.name}`;
-    }
-  }
-  for (const k of Object.keys(args)) {
-    if (!props[k]) return `unknown parameter "${k}" for ${t.name}`;
-  }
-  return null;
-}
+export const hybrid = fromLibrary(
+  "hybrid",
+  "Arm B · namespace collapse (L0+L1+ns)",
+  { level: 2 },
+);
 
-// ---------------------------------------------------------------------------
-// Arm 0 — control
-// ---------------------------------------------------------------------------
+export const minified = fromLibrary(
+  "minified",
+  "Arm A · minified codes, bare names in map",
+  { level: 3, mapStyle: "name" },
+);
 
-export const control: CompressionStrategy = {
-  id: "control",
-  label: "Arm 0 · uncompressed",
-  compile(tools): CompiledRequest {
-    return {
-      tools: tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.input_schema,
-      })),
-      systemPreamble: "",
-      cachePreamble: false,
-    };
-  },
-  resolve(tools, rawName, rawArgs): Resolution {
-    const t = findTool(tools, rawName);
-    if (!t) return { kind: "error", message: `no such tool: ${rawName}` };
-    const err = validate(t, rawArgs);
-    if (err) return { kind: "error", message: err };
-    return { kind: "call", name: t.name, args: rawArgs };
-  },
-};
+// ── arm-A variants, also library configurations ─────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Arm C — signatures (L0 only: flatten schemas, keep everything else native)
-// ---------------------------------------------------------------------------
+/**
+ * The configuration the original 150-run sweep actually measured, before the
+ * divergence was found. Kept so the two can be compared head to head instead
+ * of assumed equivalent.
+ */
+export const minifiedTerse = fromLibrary(
+  "minified-terse",
+  "Arm A′ · minified, terse descriptors in map",
+  { level: 3, mapStyle: "terse" },
+);
 
-export const signatures: CompressionStrategy = {
-  id: "signatures",
-  label: "Arm C · signature lines (L0)",
-  compile(tools): CompiledRequest {
-    return {
-      tools: tools.map((t) => ({
-        name: t.name,
-        description: `${signature(t)} — ${firstSentence(t.description)}`,
-        input_schema: flattenSchema(t),
-      })),
-      systemPreamble: "",
-      cachePreamble: false,
-    };
-  },
-  resolve: control.resolve,
-};
+/**
+ * Hardening candidate. Arm A's one measured weakness is malformed arguments —
+ * the dispatcher gives up provider-side constrained decoding. Naming the
+ * required parameters costs a few tokens per tool against a full schema's ~400.
+ */
+export const minifiedPlus = fromLibrary(
+  "minified-plus",
+  "Arm A″ · minified + required args in map",
+  { level: 3, mapStyle: "name+required" },
+);
 
-// ---------------------------------------------------------------------------
-// Arm D — native (L1 only: Anthropic server-side tool search + defer_loading)
-// ---------------------------------------------------------------------------
+// ── native tool search: a baseline, not a library feature ───────────────────
 
-/** Tools kept resident; everything else is deferred and must be searched for. */
+/** Tools kept resident; the rest are deferred and must be searched for. */
 const NATIVE_HOT = 5;
 
 export const nativeSearch: CompressionStrategy = {
   id: "native",
-  label: "Arm D · native tool search (L1)",
+  label: "Arm D · Anthropic native tool search",
   compile(tools): CompiledRequest {
     const wire: any[] = [
       {
@@ -169,209 +156,32 @@ export const nativeSearch: CompressionStrategy = {
     return { tools: wire, systemPreamble: "", cachePreamble: false };
   },
   resolve(tools, rawName, rawArgs): Resolution {
+    // Server-side search resolves itself; nothing to feed back.
     if (rawName === "tool_search_tool_regex") {
-      return { kind: "meta", name: rawName, result: "" }; // server-side
+      return { kind: "meta", name: rawName, result: "" };
     }
     return control.resolve(tools, rawName, rawArgs);
   },
 };
 
-// ---------------------------------------------------------------------------
-// Arm B — hybrid (L0 + L1 + namespace collapse, semantic names)
-// ---------------------------------------------------------------------------
-
-const NS_ALIAS: Record<string, string> = {
-  github: "gh",
-  slack: "sl",
-  jira: "jr",
-  gdrive: "gd",
-  stripe: "st",
-  aws: "aws",
-  notion: "nt",
-  linear: "ln",
-  datadog: "dd",
-};
-
-function groupByNs(tools: ToolDef[]): Map<string, ToolDef[]> {
-  const m = new Map<string, ToolDef[]>();
-  for (const t of tools) {
-    if (!m.has(t.ns)) m.set(t.ns, []);
-    m.get(t.ns)!.push(t);
-  }
-  return m;
-}
-
-export const hybrid: CompressionStrategy = {
-  id: "hybrid",
-  label: "Arm B · namespace collapse (L0+L1+ns)",
-  compile(tools): CompiledRequest {
-    const groups = groupByNs(tools);
-    const wire: any[] = [];
-    const manifest: string[] = [];
-
-    for (const [ns, list] of groups) {
-      const alias = NS_ALIAS[ns] ?? ns;
-      const ops = list.map((t) => t.op);
-      wire.push({
-        name: alias,
-        description: `${ns} operations. op ∈ {${ops.join(",")}}. Call describe_op first if unsure of args.`,
-        input_schema: {
-          type: "object",
-          properties: {
-            op: { type: "string", enum: ops },
-            args: { type: "object" },
-          },
-          required: ["op", "args"],
-        },
-      });
-      manifest.push(
-        `${alias}: ${list.map((t) => `${t.op}(${Object.keys(t.input_schema.properties ?? {}).length})`).join(" ")}`,
-      );
-    }
-
-    wire.push({
-      name: "describe_op",
-      description:
-        "Get the full parameter signature and description for an operation.",
-      input_schema: {
-        type: "object",
-        properties: {
-          ns: { type: "string" },
-          op: { type: "string" },
-        },
-        required: ["ns", "op"],
-      },
-    });
-
-    return {
-      tools: wire,
-      systemPreamble: `<tools>\n${manifest.join("\n")}\n</tools>`,
-      cachePreamble: true,
-    };
-  },
-  resolve(tools, rawName, rawArgs): Resolution {
-    if (rawName === "describe_op") {
-      const t = tools.find(
-        (x) =>
-          (x.ns === rawArgs.ns || NS_ALIAS[x.ns] === rawArgs.ns) &&
-          x.op === rawArgs.op,
-      );
-      if (!t) return { kind: "error", message: `unknown op ${rawArgs.ns}.${rawArgs.op}` };
-      return {
-        kind: "meta",
-        name: rawName,
-        result: `${signature(t)} — ${t.description}`,
-      };
-    }
-    const ns = Object.entries(NS_ALIAS).find(([, a]) => a === rawName)?.[0] ?? rawName;
-    const t = tools.find((x) => x.ns === ns && x.op === rawArgs.op);
-    if (!t) return { kind: "error", message: `unknown op ${rawName}.${rawArgs.op}` };
-    const args = rawArgs.args ?? {};
-    const err = validate(t, args);
-    if (err) return { kind: "error", message: err };
-    return { kind: "call", name: t.name, args };
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Arm A — minified (the maximal-compression design)
-// ---------------------------------------------------------------------------
-
-const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
-
-function codeMap(tools: ToolDef[]): Map<string, ToolDef> {
-  const groups = groupByNs(tools);
-  const m = new Map<string, ToolDef>();
-  let ni = 0;
-  for (const [, list] of groups) {
-    const nsChar = CODE_CHARS[ni++ % CODE_CHARS.length];
-    list.forEach((t, oi) => m.set(`${nsChar}${oi}`, t));
-  }
-  return m;
-}
-
-export const minified: CompressionStrategy = {
-  id: "minified",
-  label: "Arm A · minified codes (L0+L1+ns+minify)",
-  compile(tools): CompiledRequest {
-    const codes = codeMap(tools);
-    const lines: string[] = [];
-    for (const [code, t] of codes) lines.push(`${code} ${terse(t.description)}`);
-
-    return {
-      tools: [
-        {
-          name: "t",
-          description: "Invoke a tool by its map code. See <m> in system prompt.",
-          input_schema: {
-            type: "object",
-            properties: {
-              f: { type: "string" },
-              a: { type: "object" },
-            },
-            required: ["f"],
-          },
-        },
-        {
-          name: "q",
-          description:
-            "Look up the full name, description and parameter signature for a map code, or search the map by keyword.",
-          input_schema: {
-            type: "object",
-            properties: {
-              c: { type: "string" },
-              s: { type: "string" },
-            },
-          },
-        },
-      ],
-      systemPreamble: `<m>\n${lines.join("\n")}\n</m>\nCall t with f=<code>. Use q to expand a code before calling if unsure of parameters.`,
-      cachePreamble: true,
-    };
-  },
-  resolve(tools, rawName, rawArgs): Resolution {
-    const codes = codeMap(tools);
-    if (rawName === "q") {
-      if (rawArgs.c) {
-        const t = codes.get(rawArgs.c);
-        if (!t) return { kind: "error", message: `no code ${rawArgs.c}` };
-        return {
-          kind: "meta",
-          name: rawName,
-          result: `${rawArgs.c} = ${signature(t)} — ${t.description}`,
-        };
-      }
-      const q = String(rawArgs.s ?? "").toLowerCase();
-      const hits = [...codes.entries()]
-        .filter(
-          ([, t]) =>
-            t.name.toLowerCase().includes(q) ||
-            t.description.toLowerCase().includes(q),
-        )
-        .slice(0, 8)
-        .map(([c, t]) => `${c} = ${signature(t)}`);
-      return {
-        kind: "meta",
-        name: rawName,
-        result: hits.length ? hits.join("\n") : "no matches",
-      };
-    }
-    if (rawName !== "t") {
-      return { kind: "error", message: `no such tool: ${rawName}` };
-    }
-    const t = codes.get(rawArgs.f);
-    if (!t) return { kind: "error", message: `no code ${rawArgs.f}` };
-    const args = rawArgs.a ?? {};
-    const err = validate(t, args);
-    if (err) return { kind: "error", message: err };
-    return { kind: "call", name: t.name, args };
-  },
-};
-
+/** Anthropic-only sweep: includes the native baseline. */
 export const ARMS: CompressionStrategy[] = [
   control,
   signatures,
   nativeSearch,
   hybrid,
   minified,
+];
+
+/** Arm-A variants, opted into with --variants. */
+export const A_VARIANTS: CompressionStrategy[] = [minifiedTerse, minifiedPlus];
+
+/** Maps each library-backed arm to the configuration it must equal. */
+export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
+  { arm: control, opts: { level: 0 } },
+  { arm: signatures, opts: { level: 1 } },
+  { arm: hybrid, opts: { level: 2 } },
+  { arm: minified, opts: { level: 3, mapStyle: "name" } },
+  { arm: minifiedTerse, opts: { level: 3, mapStyle: "terse" } },
+  { arm: minifiedPlus, opts: { level: 3, mapStyle: "name+required" } },
 ];

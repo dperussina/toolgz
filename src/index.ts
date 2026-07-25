@@ -20,6 +20,7 @@ import type {
   NormalizedTool,
   Resolution,
   Tool,
+  MapStyle,
 } from "./types.js";
 import {
   countSchemaTokensApprox,
@@ -28,6 +29,7 @@ import {
   flattenSchema,
   normalize,
   signatureLine,
+  terseDescriptor,
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
 
@@ -36,6 +38,7 @@ export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
 const LEVELS: Level[] = [0, 1, 2, 3];
+const MAP_STYLES: MapStyle[] = ["name", "name+required", "terse"];
 
 const err = (message: string, recoverable = true): Resolution => ({
   kind: "error",
@@ -68,6 +71,13 @@ export function compress(
   const level = (options.level ?? 1) as Level;
   if (!LEVELS.includes(level)) {
     throw new Error(`unsupported level: ${level} (expected 0, 1, 2 or 3)`);
+  }
+
+  const mapStyle = options.mapStyle ?? "name";
+  if (!MAP_STYLES.includes(mapStyle)) {
+    throw new Error(
+      `unsupported mapStyle: ${mapStyle} (expected ${MAP_STYLES.join(", ")})`,
+    );
   }
 
   const namespaceOf = options.namespaceOf ?? defaultNamespaceOf;
@@ -267,13 +277,23 @@ export function compress(
   // -------------------------------------------------------------------------
   // Level 3 — minified dispatcher + opaque codes
   // -------------------------------------------------------------------------
-  // The map line is `code name` — the real tool name, nothing more.
+  // Map line rendering. Default is `code name`: a prose descriptor reintroduces
+  // per-tool text into the cached prefix and, measured at 60 tools, made level 3
+  // LARGER than level 2. The name is the densest useful selector, and full
+  // descriptions stay one q() call away.
   //
-  // A prose descriptor here defeats the point: it reintroduces per-tool text
-  // into the cached prefix and, measured at 60 tools, made level 3 LARGER than
-  // level 2. The name is the densest possible selector — it is what the model
-  // already reasons over — and full descriptions stay one q() call away.
-  const lines = [...codeToTool.entries()].map(([code, t]) => `${code} ${t.name}`);
+  // `name+required` adds the required parameter names — a few tokens per tool
+  // against a full schema's ~400 — to reduce malformed arguments on models that
+  // fill the generic argument bag poorly.
+  const renderLine = (code: string, t: NormalizedTool): string => {
+    if (mapStyle === "terse") return `${code} ${terseDescriptor(t.description) || t.name}`;
+    if (mapStyle === "name+required") {
+      const req = t.schema.required ?? [];
+      return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
+    }
+    return `${code} ${t.name}`;
+  };
+  const lines = [...codeToTool.entries()].map(([code, t]) => renderLine(code, t));
   const wire = [
     {
       name: "t",
@@ -298,7 +318,11 @@ export function compress(
       },
     },
   ];
-  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\nInvoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.`;
+  const mapLegend =
+    mapStyle === "name+required"
+      ? "Each line is: code name required-args. "
+      : "";
+  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.`;
 
   return finish(
     wire,

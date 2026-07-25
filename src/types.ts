@@ -39,8 +39,25 @@ export type NormalizedTool = {
  */
 export type Level = 0 | 1 | 2 | 3;
 
+/**
+ * How each line of the level-3 `<toolmap>` is rendered.
+ *
+ *   name           `a0 github_create_issue`
+ *   name+required  `a0 github_create_issue owner,repo,title`
+ *   terse          `a0 create new issue in repository`
+ *
+ * `name` is the default and the smallest. `name+required` costs a few tokens
+ * per tool and exists to cut malformed arguments on models that fill the
+ * generic argument bag badly — the dispatcher levels give up provider-side
+ * constrained decoding, and this buys some of it back cheaply. `terse` drops
+ * the real name entirely; it is the most aggressive and the least legible.
+ */
+export type MapStyle = "name" | "name+required" | "terse";
+
 export type CompressOptions = {
   level?: Level;
+  /** Level 3 only. Ignored at levels 0–2, which emit no map. Default "name". */
+  mapStyle?: MapStyle;
   /**
    * Group tools into namespaces. Default splits on the first `_` or `.`,
    * which matches MCP naming convention (`github_create_issue`).

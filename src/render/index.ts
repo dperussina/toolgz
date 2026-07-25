@@ -89,6 +89,20 @@ export function signatureLine(tool: Tool | NormalizedTool, nameOverride?: string
   return `${nameOverride ?? tool.name}(${parts.join(",")})`;
 }
 
+/**
+ * Aggressively shortened descriptor: first sentence, stop-words dropped,
+ * lowercased. Used by the `terse` map style, which trades legibility (and the
+ * real tool name) for a few tokens per line.
+ */
+export function terseDescriptor(s: string): string {
+  return firstSentence(s)
+    .replace(/\b(the|a|an|to|of|for|in|with|and|that|this)\b ?/gi, "")
+    .replace(/[.!?]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 /** First sentence only — the rest is almost always restatement. */
 export function firstSentence(s: string): string {
   const m = s.match(/^(.*?[.!?])(\s|$)/s);

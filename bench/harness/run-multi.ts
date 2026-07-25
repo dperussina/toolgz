@@ -17,7 +17,7 @@
  */
 import "dotenv/config";
 import { mkdirSync, appendFileSync } from "node:fs";
-import { ARMS } from "../strategies/index.js";
+import { ARMS, A_VARIANTS } from "../strategies/index.js";
 import { SCENARIOS, type Scenario } from "../scenarios.js";
 import { ACCURACY_SCENARIOS } from "../scenarios-accuracy.js";
 import type { CompressionStrategy } from "../core/types.js";
@@ -39,6 +39,12 @@ const SYSTEM_BASE =
 const PORTABLE_ARMS: CompressionStrategy[] = ARMS.filter(
   (a) => a.id !== "native",
 );
+
+/** --variants adds the arm-A hardening candidates. */
+const withVariants = process.argv.includes("--variants");
+const ACTIVE_ARMS: CompressionStrategy[] = withVariants
+  ? [...PORTABLE_ARMS, ...A_VARIANTS]
+  : PORTABLE_ARMS;
 
 async function loadProviders(which: string): Promise<Provider[]> {
   const out: Provider[] = [];
@@ -224,7 +230,7 @@ async function main() {
 
   console.log(
     `providers=${providers.map((p) => `${p.id}(${p.model})`).join(" ")}\n` +
-      `arms=${PORTABLE_ARMS.map((a) => a.id).join(",")} ` +
+      `arms=${ACTIVE_ARMS.map((a) => a.id).join(",")} ` +
       `scenarios=${scenarios.length} reps=${reps} suite=${suiteName}\n`,
   );
 
@@ -234,7 +240,7 @@ async function main() {
 
     for (const sc of scenarios) {
       console.log(`\n━━ ${sc.id} (${sc.tools.length} tools)`);
-      for (const arm of PORTABLE_ARMS) {
+      for (const arm of ACTIVE_ARMS) {
         let block = 0;
         try {
           const c = arm.compile(sc.tools);

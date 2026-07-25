@@ -421,6 +421,13 @@ function normaliseResponse(res: GenerateContentResponse): ChatResult {
 /** Smallest legal prompt, used as the constant baseline when measuring. */
 const PROBE_CONTENTS: Content[] = [{ role: "user", parts: [{ text: "x" }] }];
 
+/**
+ * Output cap for the two measurement calls. Only `promptTokenCount` is read, so
+ * this just needs to be small; it is not squeezed to 1 because Gemini 3 Pro
+ * always thinks and a too-tight cap can fail the request outright.
+ */
+const MEASURE_MAX_TOKENS = 256;
+
 export const geminiProvider: Provider = {
   id: "gemini",
   model: MODEL,
@@ -451,17 +458,25 @@ export const geminiProvider: Provider = {
   /**
    * Prompt tokens attributable to the tool block + preamble.
    *
-   * Method: `countTokens` (Gemini's dedicated token-counting endpoint). Its
-   * config accepts `tools` and `systemInstruction`, so we count a fixed one-word
-   * probe prompt twice — once with the tool block and preamble attached, once
-   * bare — and take the difference. That cancels the probe and any fixed prompt
-   * scaffolding, leaving only what the tools + preamble cost.
+   * METHOD USED: measurement by difference against two real `generateContent`
+   * calls, subtracting the reported `promptTokenCount`.
    *
-   * Fallback: the Developer API is not guaranteed to fold `tools` into the
-   * countTokens total (some backends ignore the field). If the difference comes
-   * back <= 0, or countTokens rejects the config outright, we fall back to
-   * measuring by difference against two real `generateContent` calls and
-   * subtracting the reported `promptTokenCount`. That costs a little money,
+   * Gemini does expose a dedicated `countTokens` endpoint, but it cannot do this
+   * job on the Gemini Developer API: passing either `tools` or
+   * `systemInstruction` in `CountTokensConfig` is rejected before the request
+   * even leaves the process. Verified against @google/genai v2.13.0, which
+   * throws:
+   *
+   *   "tools parameter is only supported in Gemini Enterprise Agent Platform
+   *    mode, not in Gemini Developer API mode."
+   *   "systemInstruction parameter is only supported in Gemini Enterprise Agent
+   *    Platform mode, not in Gemini Developer API mode."
+   *
+   * countTokens is therefore still attempted first, so that this adapter picks
+   * the cheap path automatically if Google ever lifts that restriction, but the
+   * generateContent difference is what actually runs today. Both calls use the
+   * same fixed one-word probe prompt, so the probe and any fixed scaffolding
+   * cancel out and only the tools + preamble remain. That costs a little money,
    * which is why the harness calls this once per (arm, scenario).
    */
   async measureToolBlock(tools: WireTool[], systemPreamble: string): Promise<number> {
@@ -473,19 +488,19 @@ export const geminiProvider: Provider = {
     const systemInstruction = buildSystemInstruction("", systemPreamble);
 
     try {
-      const [loaded, bare] = await Promise.all([
-        ai().models.countTokens({
-          model: MODEL,
-          contents: PROBE_CONTENTS,
-          config: { ...withTools, systemInstruction },
-        }),
-        ai().models.countTokens({ model: MODEL, contents: PROBE_CONTENTS }),
-      ]);
-
+      const loaded = await ai().models.countTokens({
+        model: MODEL,
+        contents: PROBE_CONTENTS,
+        config: { ...withTools, systemInstruction },
+      });
+      const bare = await ai().models.countTokens({
+        model: MODEL,
+        contents: PROBE_CONTENTS,
+      });
       const delta = (loaded.totalTokens ?? 0) - (bare.totalTokens ?? 0);
       if (delta > 0) return delta;
     } catch {
-      // fall through to the generateContent difference below
+      // Expected today; fall through to the generateContent difference.
     }
 
     const [loaded, bare] = await Promise.all([
@@ -493,7 +508,7 @@ export const geminiProvider: Provider = {
         model: MODEL,
         contents: PROBE_CONTENTS,
         config: {
-          maxOutputTokens: 64,
+          maxOutputTokens: MEASURE_MAX_TOKENS,
           systemInstruction,
           ...withTools,
           automaticFunctionCalling: { disable: true },
@@ -503,7 +518,7 @@ export const geminiProvider: Provider = {
         model: MODEL,
         contents: PROBE_CONTENTS,
         config: {
-          maxOutputTokens: 64,
+          maxOutputTokens: MEASURE_MAX_TOKENS,
           automaticFunctionCalling: { disable: true },
         },
       }),
