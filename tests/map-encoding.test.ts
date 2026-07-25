@@ -186,3 +186,46 @@ describe("existing styles are untouched", () => {
     expect(() => compress(TOOLS, { level: 3, mapStyle: "nope" as any })).toThrow(/unsupported mapStyle/);
   });
 });
+
+describe("namespaceOf contract is enforced", () => {
+  // Found by getting it wrong while benchmarking: the callback takes a name and
+  // returns { ns, op }, but returning a bare namespace string is the natural
+  // mistake. That used to fail silently — every tool collapsed into one
+  // `undefined` namespace, and the first symptom was Anthropic rejecting a tool
+  // with an empty name, which points nowhere near the cause.
+  it("rejects a callback that returns a bare string", () => {
+    expect(() =>
+      compress(TOOLS, { level: 2, namespaceOf: ((n: string) => "github") as any }),
+    ).toThrow(/must return \{ ns, op \}/);
+  });
+
+  it("names the offending tool and shows a correct example", () => {
+    try {
+      compress(TOOLS, { level: 2, namespaceOf: ((n: string) => "x") as any });
+      throw new Error("should have thrown");
+    } catch (e: any) {
+      // The first tool processed is the one reported.
+      expect(e.message).toContain("github_search_issues");
+      expect(e.message).toContain("ns: serverOf(name)");
+    }
+  });
+
+  it("rejects empty ns or op rather than emitting an unnamed tool", () => {
+    expect(() =>
+      compress(TOOLS, { level: 2, namespaceOf: (() => ({ ns: "", op: "x" })) as any }),
+    ).toThrow(/non-empty strings/);
+    expect(() =>
+      compress(TOOLS, { level: 2, namespaceOf: (() => ({ ns: "a", op: "" })) as any }),
+    ).toThrow(/non-empty strings/);
+  });
+
+  it("accepts a correct custom namespaceOf", () => {
+    const k = compress(TOOLS, {
+      level: 3,
+      mapStyle: "grouped",
+      namespaceOf: (name: string) => ({ ns: name.startsWith("github") ? "gh" : "sl", op: name }),
+    });
+    expect(k.systemPreamble).toContain("gh:");
+    expect(k.resolve("t", { f: "slack_post_message", a: { channel: "#a", text: "b" } }).kind).toBe("call");
+  });
+});
