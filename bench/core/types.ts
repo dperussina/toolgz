@@ -69,6 +69,8 @@ export type TurnRecord = {
 };
 
 export type ScenarioResult = {
+  /** Model that produced this run. Never aggregate across differing values. */
+  model?: string;
   scenario: string;
   arm: string;
   rep: number;

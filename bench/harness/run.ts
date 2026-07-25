@@ -10,9 +10,36 @@ import type {
   TurnRecord,
 } from "../core/types.js";
 
-const MODEL = "claude-opus-5";
-const PRICE_IN = 5.0 / 1_000_000;
-const PRICE_OUT = 25.0 / 1_000_000;
+/**
+ * Model registry. Pricing is $/MTok (input, output) at actually-billed rates.
+ *
+ * `supportsEffort` matters: `output_config.effort` errors on Haiku 4.5, so the
+ * knob is omitted there. That is a real confound when comparing Haiku against
+ * Opus/Sonnet — Haiku runs without an effort pin while the others are held at
+ * "high". Report it; do not quietly treat the arms as identically configured.
+ */
+const MODELS = {
+  "claude-opus-5": { in: 5.0, out: 25.0, supportsEffort: true },
+  "claude-sonnet-5": { in: 2.0, out: 10.0, supportsEffort: true }, // intro rate thru 2026-08-31
+  "claude-haiku-4-5": { in: 1.0, out: 5.0, supportsEffort: false },
+} as const;
+
+type ModelId = keyof typeof MODELS;
+
+const MODEL = (process.argv
+  .find((a) => a.startsWith("--model="))
+  ?.split("=")[1] ?? "claude-opus-5") as ModelId;
+
+if (!(MODEL in MODELS)) {
+  console.error(
+    `unknown model: ${MODEL}\nknown: ${Object.keys(MODELS).join(", ")}`,
+  );
+  process.exit(1);
+}
+
+const SPEC = MODELS[MODEL];
+const PRICE_IN = SPEC.in / 1_000_000;
+const PRICE_OUT = SPEC.out / 1_000_000;
 const PRICE_CACHE_WRITE = PRICE_IN * 1.25;
 const PRICE_CACHE_READ = PRICE_IN * 0.1;
 
@@ -135,7 +162,10 @@ async function runOne(
       const resp: any = await client.messages.create({
         model: MODEL,
         max_tokens: 8000,
-        output_config: { effort: "high" } as any,
+        // Omitted on models where effort is unsupported (Haiku 4.5 → 400).
+        ...(SPEC.supportsEffort
+          ? { output_config: { effort: "high" } as any }
+          : {}),
         system,
         tools: wireTools as any,
         messages,
@@ -228,6 +258,7 @@ async function runOne(
   }
 
   return {
+    model: MODEL,
     scenario: sc.id,
     arm: strat.id,
     rep,
@@ -255,8 +286,11 @@ async function main() {
   const scenarios = only ? suite.filter((s) => s.id === only) : suite;
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const turnsPath = `${OUT_DIR}turns-${stamp}.jsonl`;
-  const resultsPath = `${OUT_DIR}results-${stamp}.jsonl`;
+  // Model goes in the filename: results from different models must never be
+  // aggregated together by a later glob.
+  const tag = `${MODEL}-${stamp}`;
+  const turnsPath = `${OUT_DIR}turns-${tag}.jsonl`;
+  const resultsPath = `${OUT_DIR}results-${tag}.jsonl`;
   const turnSink: TurnRecord[] = [];
   const results: ScenarioResult[] = [];
 
