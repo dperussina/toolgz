@@ -3,7 +3,7 @@
 <p><strong>Your agent spends 30–50k tokens of context on tool definitions before the user types a word. toolgz gets ~80% of it back.</strong></p>
 
 <p>
-<a href="#measured-results">720 benchmark runs</a> ·
+<a href="#measured-results">420-run cross-provider sweep</a> ·
 4 frontier models ·
 zero runtime dependencies ·
 <a href="docs/BEFORE-AFTER.md">generated before/after</a>
@@ -48,25 +48,26 @@ if (r.kind === "call") await myDispatch(r.name, r.args);   // real name, real ar
 
 ## Measured results
 
-Four frontier models, six strategies, five tool-selection tasks, 3 reps —
-**360 runs** on the current sweep (720 including the earlier Anthropic-only rounds).
-Every raw per-run record is committed in [`bench/results/`](bench/results/); recompute any
-figure with `npx tsx bench/analyze-multi.ts`.
+Four frontier models, seven strategies, five tool-selection tasks, 3 reps —
+**420 runs** on the current sweep, 1,200+ across all rounds. Every raw per-run record is
+committed in [`bench/results/`](bench/results/); recompute any figure with
+`npx tsx bench/analyze-multi.ts`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/savings-dark.svg">
   <img src="docs/img/savings-light.svg" alt="Prompt tokens saved versus uncompressed tool definitions, by compression level, for each of four providers">
 </picture>
 
-| Provider | Model | Tool block | Prompt tokens | Tasks |
-|---|---|---:|---:|:-:|
-| Anthropic | `claude-opus-5` | 9,242 → **1,284** | 32,513 → **5,850** (−82%) | 15/15 |
-| Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,182** (−80%) | 15/15 |
-| xAI | `grok-4.5` | 6,421 → **775** | 15,201 → **2,988** (−80%) | 15/15 |
-| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,492 → **2,338** (−69%) | 15/15 |
+| Provider | Model | Tool block | Prompt tokens | Cost | Latency | Tasks |
+|---|---|---:|---:|---:|---:|:-:|
+| Anthropic | `claude-opus-5` | 9,242 → **1,284** | 30,817 → **4,628** (−85%) | **−78%** | 15.0s → **12.1s** | 15/15 |
+| xAI | `grok-4.5` | 6,421 → **775** | 17,522 → **2,663** (−85%) | **−70%** | 6.1s → **4.6s** | 15/15 |
+| Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,302** (−79%) | **−62%** | 5.6s → **5.5s** | 15/15 |
+| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,694 → **2,196** (−71%) | **−7%** | 6.8s → **5.6s** | 15/15 |
 
 Reasoning is enabled on all four at high effort, so this is a like-for-like frontier
-comparison. **60/60 tasks completed, zero hallucinated tool names.**
+comparison. **60/60 tasks completed, zero hallucinated tool names, zero malformed
+arguments** — and it is faster than uncompressed on every provider.
 
 ### It does not make the model worse
 
@@ -85,19 +86,26 @@ problem and looks up what it needs. The default map style exists because of the 
 bare tool names failed on `grok-4.5` **deterministically**, 3 of 3 attempts on one scenario,
 answering with zero tool calls and no error raised. Naming the required arguments fixed it.
 
-### Be honest about cost
+### Cost, and why it took two rounds to get right
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/cost-dark.svg">
-  <img src="docs/img/cost-light.svg" alt="Prompt token reduction always positive; cost change negative on three providers and positive on OpenAI">
+  <img src="docs/img/cost-light.svg" alt="Prompt tokens and cost both reduced on all four providers">
 </picture>
 
-Context is always reclaimed. **Money is not.** On three providers the bill drops 60–76%. On
-OpenAI it goes **up 15%** — the dispatcher's extra turns cost more in reasoning tokens than
-the smaller prompt saves.
+The first cross-provider sweep found cost going **up 15% on OpenAI** even while context fell
+69%. The dispatcher was spending extra turns, and on a reasoning model every turn pays for a
+fresh round of thinking.
 
-If your constraint is context window, this wins everywhere. If your constraint is spend,
-measure it on your own workload first.
+So we captured the calls that were being rejected instead of guessing, and found three bugs
+in *this library*: models pass `query` to a parameter named `q` (14 of 18 rejections), they
+sometimes call the map code as the tool name, and they sometimes pass arguments flat instead
+of nested. Fixing all three took OpenAI from **+15% to −7%** and drove malformed arguments to
+**zero on every provider**.
+
+OpenAI's −7% is still the smallest saving, and honestly so: reasoning output dominates its
+bill, so a smaller prompt moves the total less. **Context-window occupancy remains the
+primary claim** — cost follows from it, by an amount that depends on your reasoning settings.
 
 ---
 
@@ -138,6 +146,17 @@ b0 slack_post_message channel,text
 The model calls `t(f="a0", a={…})`, and `q(c="a0")` expands a code to its full signature when
 it needs the optional parameters.
 
+If you want to remove those lookups entirely, put the whole signature in the map:
+
+```ts
+compress(myTools, { level: 3, mapStyle: "signature" });
+// a0 github_create_issue(owner,repo,title,body?,labels?)
+```
+
+Measured: lookups drop to zero and it was the **fastest and cheapest** arm on OpenAI (4.0s,
+−17% cost). It is slightly larger, and on xAI it was worse than the default, so it is an
+option rather than the default.
+
 **The trade:** at levels 2–3 the model fills a generic argument object, so the provider's
 sampler no longer enforces your schema. toolgz validates against your *original* schema and
 returns a model-readable error instead. That is why `validate` defaults to on — leave it on.
@@ -156,6 +175,7 @@ trip. A test asserts that file matches the code, so it cannot drift.
 | **[Complete guide](docs/GUIDE.md)** | Install → working agent loop. Per-provider setup for all four, prompt caching, MCP aggregation, troubleshooting. Start here. |
 | **[Before / after](docs/BEFORE-AFTER.md)** | Generated, not illustrated. Both artifacts toolgz modifies, at every level. |
 | **[Full results](docs/RESULTS.md)** | Every number, the methodology, and what it does **not** establish. |
+| **[Announcement drafts](docs/ANNOUNCEMENT.md)** | Ready-to-post write-ups for HN and LinkedIn, plus claims *not* to make. |
 
 ## Providers
 
@@ -178,8 +198,9 @@ xAI is OpenAI-compatible — use `forOpenAI` with `baseURL: "https://api.x.ai/v1
 
 ## What this does not do
 
-- **It does not reduce your bill just because it reduces tokens.** Measured: cheaper on
-  three providers, 15% dearer on OpenAI. The claim is context-window occupancy.
+- **The size of the cost saving is not the size of the token saving.** Measured 62–78%
+  cheaper on three providers but only 7% on OpenAI, where reasoning output dominates the
+  bill. The claim is context-window occupancy; cost follows, by a variable amount.
 - **It does not beat Anthropic's native tool search on tool-block size.** It composes with
   it, works where there is no equivalent, and is more reliable below the frontier tier —
   `defer_loading` completed only 6/30 tasks on Haiku 4.5, silently, because it lets the model

@@ -3,7 +3,8 @@
 **Rounds 1–3** — Anthropic only: `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`
 **Round 4** — cross-provider: `claude-opus-5`, `gpt-5.6-sol`, `gemini-3.1-pro-preview`, `grok-4.5`
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
-**Total**: 720 runs across rounds 1–4 · $19.87 · 2026-07-25
+**Round 5** — same four providers, after hardening the resolver from observed failures
+**Total**: 1,212 runs across rounds 1–5 · ~$32 · 2026-07-25
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
 **Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze.ts` (rounds 1–3), `npx tsx bench/analyze-multi.ts` (round 4)
 **Reproduce**: `npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants` *(costs money)*
@@ -236,6 +237,92 @@ latency regression anywhere in the sweep, and it contradicts the same arm being 
 Anthropic and Google. n=15, so it may be sampling noise or provider-side variance. It is
 recorded rather than smoothed over, and wants more reps before anyone relies on
 level-3 latency on xAI.
+
+---
+
+## Round 5 — fix what round 4 exposed, then re-measure
+
+Round 4 left two problems: cost **rose 15% on OpenAI**, and malformed arguments
+persisted (4 on Anthropic, 1 on xAI for the shipped default). Rather than guess at
+causes, the harness was changed to record the rejected calls themselves — the raw
+tool name, the arguments the model sent, and the validation message.
+
+### What the diagnostics showed
+
+18 captured rejections, and every root cause was in **this library**, not the models:
+
+| Cause | Share | Fix |
+|---|---|---|
+| Model passes `query` to a parameter named `q` | 14/18 | Errors now name the likely rename via nearest-name matching. Not auto-remapped — guessing at intent could dispatch wrong data. |
+| Model calls the map code *as* the tool name (`b5` instead of `t(f="b5")`) | 1/18 | Accepted. Codes are unique and cannot collide with `t`/`q`, so the form is unambiguous. |
+| Model invents a parameter (`per_page` on a tool without it) | 1/18 | Genuinely the model's error; message now surfaces the nearest accepted name. |
+| Arguments sent flat rather than nested under `a` | — | Accepted, preferring `a` when both are present. |
+
+Enum case drift (`approve` for `APPROVE`) now shows the exact accepted spelling.
+
+A fourth map style, `signature`
+(`a0 github_create_issue(owner,repo,title,body?,labels?)`), was added to test
+whether removing `q()` lookups entirely would pay for a larger cached map.
+
+### Results — 420 runs, 7 arms
+
+Shipped default (`mapStyle: "name+required"`) against uncompressed:
+
+| Provider | Tool block | Prompt | Cost | Latency | Tasks | Malformed |
+|---|---:|---:|---:|---:|:-:|---:|
+| Anthropic | 9,242 → 1,284 | 30,817 → 4,628 (−85%) | −78% | 15.0s → 12.1s | 15/15 | 0 |
+| xAI | 6,421 → 775 | 17,522 → 2,663 (−85%) | −70% | 6.1s → 4.6s | 15/15 | 0 |
+| Google | 5,264 → 732 | 10,948 → 2,302 (−79%) | −62% | 5.6s → 5.5s | 15/15 | 0 |
+| OpenAI | 2,752 → 573 | 7,694 → 2,196 (−71%) | −7% | 6.8s → 5.6s | 15/15 | 0 |
+
+### What changed against round 4
+
+| | Round 4 | Round 5 |
+|---|---|---|
+| OpenAI cost vs uncompressed | **+15%** | **−7%** |
+| Anthropic malformed arguments | 4 | **0** |
+| xAI malformed arguments | 1 | **0** |
+| xAI latency | 12.8s vs 6.1s baseline | **4.6s** |
+| Prompt reduction (worst provider) | −69% | −71% |
+
+Three things worth stating precisely:
+
+**The OpenAI cost fix came from turns, not tokens.** Prompt size barely moved
+(−69% → −71%); what changed is that the resolver stopped rejecting recoverable
+calls. Each rejection had cost a turn, and each turn cost a fresh round of
+reasoning. This is why the round-4 framing — "context is reclaimed, money is not"
+— was too pessimistic: some of that cost was our bug, not an inherent trade.
+
+**The xAI latency anomaly was noise.** Round 4 recorded 12.8s against a 5.6s
+baseline and offered no explanation. Round 5 shows 4.6s, faster than
+uncompressed. Recording it rather than smoothing it over was right, and so was
+declining to explain it.
+
+**The default is now the best arm on every provider.** `name+required` has the
+smallest prompt on all four, a perfect task rate, and zero malformed arguments.
+Bare names remain the only style that has ever failed (14/15 on grok-4.5).
+
+### `signature`: better on OpenAI, worse on xAI
+
+| Provider | default cost | `signature` cost | default latency | `signature` latency |
+|---|---:|---:|---:|---:|
+| OpenAI | −7% | **−17%** | 5.6s | **4.0s** |
+| Google | −62% | −59% | 5.5s | **4.8s** |
+| Anthropic | −78% | −76% | 12.1s | **11.2s** |
+| xAI | −70% | −47% | 4.6s | 7.4s |
+
+It drives lookups to zero everywhere and is fastest on three of four, but the
+larger map costs xAI badly (−72% prompt reduction against the default's −85%).
+So it ships as an option, not the default — reach for it on latency- or
+turn-sensitive workloads and measure.
+
+### Honest note on the totals
+
+Malformed arguments across *all seven arms* went 29 → 30, essentially unchanged.
+The fixes drove the **shipped default** to zero on every provider, and the arms
+that still produce errors (`hybrid`, bare-name `minified`, `terse`) are the ones
+we do not recommend. Reporting only the default's improvement without this would
+overstate what changed.
 
 ---
 

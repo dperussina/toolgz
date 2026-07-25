@@ -193,12 +193,20 @@ It also turned out cheaper, not dearer: the extra few tokens per line remove a
 `q()` discovery round-trip, so the whole conversation is shorter. Fewer turns,
 fewer tokens, fewer argument errors.
 
-Two other styles exist if you have a reason:
+Three other styles exist if you have a reason:
 
 ```ts
-compress(myTools, { level: 3, mapStyle: "name" });   // smallest map; verify your model copes
-compress(myTools, { level: 3, mapStyle: "terse" });  // descriptor instead of the name
+compress(myTools, { level: 3, mapStyle: "signature" }); // full signature; removes lookups
+compress(myTools, { level: 3, mapStyle: "name" });      // smallest map; verify your model copes
+compress(myTools, { level: 3, mapStyle: "terse" });     // descriptor instead of the name
 ```
+
+**`signature`** puts the whole parameter list in the map
+(`a0 github_create_issue(owner,repo,title,body?,labels?)`), so the model never
+needs a `q()` lookup. Measured: lookups to zero, and the fastest and cheapest
+arm on OpenAI (4.0s, −17% cost against uncompressed). The map is larger, and on
+xAI it came out worse than the default — so reach for it when your workload is
+latency- or turn-sensitive, and measure.
 
 ---
 
@@ -577,11 +585,18 @@ The model invented a parameter. Feed `r.message` back as an error tool result �
 it names the accepted parameters and the model will retry. This is expected on
 levels 2 and 3 and is exactly what validation is for.
 
-**Lots of malformed arguments on a weaker model.**
-Expected, and it's formatting rather than tool choice. First check you have not
-overridden `mapStyle` away from the default `"name+required"` — that default
-exists precisely to prevent this. If you are already on it and still seeing
-errors, drop to level 1, which keeps provider-side schema enforcement.
+**Lots of malformed arguments.**
+First check you have not overridden `mapStyle` away from the default
+`"name+required"` — on the current sweep that default produced **zero**
+malformed arguments on all four providers, while the bare-name map still
+produced them. If you are on the default and still seeing errors, try
+`mapStyle: "signature"` (the model then has the optional parameters too), or
+drop to level 1, which keeps provider-side schema enforcement.
+
+The error messages are written to be actionable: a near-miss parameter name is
+named explicitly ("You passed \"query\" — did you mean \"q\"? Rename it."), and a
+wrong-case enum value shows the exact accepted spelling. Feed them straight back
+and the retry usually lands first time.
 
 **`cache_read_input_tokens` is always 0.**
 Something in your prefix varies per request. See [§7](#7-prompt-caching).
@@ -656,7 +671,7 @@ number can be recomputed rather than trusted.
 | Option | Type | Default | Notes |
 |---|---|---|---|
 | `level` | `0 \| 1 \| 2 \| 3` | `1` | see [§3](#3-which-level-should-i-use) |
-| `mapStyle` | `"name" \| "name+required" \| "terse"` | `"name+required"` | level 3 only |
+| `mapStyle` | `"name" \| "name+required" \| "signature" \| "terse"` | `"name+required"` | level 3 only |
 | `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–3 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `searchLimit` | `number` | `8` | max results from a `q` search |

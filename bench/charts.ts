@@ -248,7 +248,7 @@ function chartReduction(rows: Row[], t: Theme): string {
 
 // ── chart 2: reliability of the level-3 map styles ─────────────────────────
 function chartReliability(rows: Row[], t: Theme): string {
-  const styles = ["minified", "minified-terse", "minified-plus"];
+  const styles = ["minified", "minified-terse", "minified-plus", "minified-sig"];
   const providers = ["anthropic", "gemini", "openai", "xai"];
   const W = 760;
   const cell = 64;
@@ -260,7 +260,7 @@ function chartReliability(rows: Row[], t: Theme): string {
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
     `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Bare tool names are not always enough signal to dispatch</text>`,
     wrapText(
-      "Tasks completed, 15 per cell. All three styles save roughly the same tokens, so reliability is what separates them - and only the bare-name map fails.",
+      "Tasks completed, 15 per cell. Every style saves roughly the same tokens, so reliability is what separates them - and only the bare-name map fails.",
       20, 52, W - 40, 12.5, t.ink2,
     ),
   ];
@@ -297,7 +297,7 @@ function chartReliability(rows: Row[], t: Theme): string {
     `<text x="${labelW + 20 + providers.length * cell + 16}" y="92" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}">TOTAL</text>`,
     ...[
       wrapText(
-        "Bare names failed on grok-4.5 deterministically - one scenario, 3 of 3 attempts, answered with zero tool calls and no error raised. Naming the required arguments fixed it, and is the shipped default.",
+        "Bare names are the only style that has ever failed, and only on grok-4.5: the model reads the map and answers with zero tool calls, no error raised. Naming the required arguments has never failed on any provider, and is the shipped default.",
         20, H - 40, W - 40, 10.5, t.muted,
       ),
     ],
@@ -317,9 +317,9 @@ function chartCost(rows: Row[], t: Theme): string {
 
   const parts: string[] = [
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
-    `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Context is always reclaimed. Money is not.</text>`,
+    `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Smaller context on all four — and now cheaper on all four</text>`,
     wrapText(
-      "Level 3 (shipped default) vs uncompressed, reasoning enabled on all four. Prompt tokens always fall; spend depends on how much the model reasons across the extra turns.",
+      "Level 3 at the shipped default vs uncompressed, reasoning enabled on all four. Cost was +15% on OpenAI until the resolver stopped wasting turns on recoverable argument errors.",
       20, 52, W - 40, 12.5, t.ink2,
     ),
     `<text x="${labelW + 20}" y="98" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}">PROMPT TOKENS</text>`,
@@ -351,7 +351,7 @@ function chartCost(rows: Row[], t: Theme): string {
 
   parts.push(
     wrapText(
-      "On OpenAI the extra dispatcher turns cost more in reasoning tokens than the smaller prompt saves. The context-window win holds regardless - that is the claim this library makes.",
+      "OpenAI's -7% is modest because reasoning output dominates its bill, so a smaller prompt moves the total less. Context-window occupancy is still the primary claim; cost follows from it, and by how much depends on your reasoning settings.",
       20, H - 40, W - 40, 10.5, t.muted,
     ),
   );
