@@ -2,7 +2,8 @@
 
 **Models**: `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`
 **Settings**: `effort: "high"` (Opus/Sonnet; Haiku rejects it), `max_tokens: 8000`
-**Total**: 250 runs · $8.03 · 2026-07-25
+**Total**: 360 runs · $9.31 · 2026-07-25
+*(160 Opus 5 · 50 Sonnet 5 · 150 Haiku 4.5; includes 10 early smoke runs)*
 **Raw data**: `bench/results/*.jsonl` (committed) · **Verify**: `npx tsx bench/analyze.ts`
 **Reproduce**: `npm run bench -- --accuracy --reps=2 --model=<id>` *(costs money)*
 
@@ -27,7 +28,7 @@ A factorial ladder, so each variable is attributable:
 
 ---
 
-## Combined — 150 runs
+## Combined — Opus 5, rounds 1 + 2 (150 runs)
 
 | Arm | Tool block | Avg prompt | Turns | Lookups | Correct | Hallucinated | Malformed | Latency | Cost |
 |---|---:|---:|---:|---:|:-:|---:|---:|---:|---:|
@@ -94,9 +95,9 @@ task — the recovery path did the work the name would otherwise have done.
 ## Round 3 — does it hold on cheaper models?
 
 Round 2 named weaker models as the single biggest untested risk for level 3.
-The same five accuracy scenarios were re-run on Sonnet 5 and Haiku 4.5 —
-identical fixtures, identical arms, 2 reps — so the only variable is the model.
-100 additional runs, $0.31.
+The same five accuracy scenarios were re-run on Sonnet 5 (2 reps) and Haiku 4.5
+(6 reps) — identical fixtures, identical arms — so the only variable is the
+model. 200 additional runs, $1.46.
 
 `effort` is pinned to `high` on Opus 5 and Sonnet 5. **Haiku 4.5 rejects
 `output_config.effort` with a 400, so it runs unpinned.** That is a real
@@ -113,27 +114,34 @@ cross-model absolute numbers as indicative, and compare *arms within a model*.
 | Sonnet 5 | `signatures` | 15,100 | 10/10 | 10/10 | 0 |
 | Sonnet 5 | `native` | 8,839 | 10/10 | 10/10 | 0 |
 | Sonnet 5 | `minified` | 4,708 | 10/10 | 10/10 | 3 |
-| Haiku 4.5 | `control` | 15,604 | 10/10 | 10/10 | 0 |
-| Haiku 4.5 | `signatures` | 11,480 | 10/10 | 10/10 | 0 |
-| Haiku 4.5 | `native` | 2,764 | **2/10** | **2/10** | 1 |
-| Haiku 4.5 | `minified` | 4,713 | 10/10 | 10/10 | 6 |
+| Haiku 4.5 | `control` | 15,217 | 30/30 | 30/30 | 0 |
+| Haiku 4.5 | `signatures` | 11,482 | 30/30 | 30/30 | 0 |
+| Haiku 4.5 | `native` | 2,906 | **6/30** | **6/30** | 1 |
+| Haiku 4.5 | `minified` | 4,578 | 30/30 | 30/30 | 17 |
 
 ### Level 3 held on every model tested
 
-40/40 correct calls across three model tiers, zero hallucinated codes. The
+60/60 correct calls across three model tiers, zero hallucinated codes. The
 predicted failure — a small model unable to work a minified code map — did not
 appear even on Haiku 4.5.
 
-The cost of a weaker model shows up as **malformed arguments, not wrong tools**:
-0 → 3 → 6 for `minified` as the model gets weaker. Every one was caught by
-schema validation and recovered on retry. This is the dispatcher trade behaving
-exactly as designed, and it is why the validation layer is not optional.
+The cost of a weaker model shows up as **malformed arguments, not wrong tools**.
+On Haiku, `minified` produced 17 malformed arguments across 30 runs — roughly
+one every other run, against 3-in-10 on Sonnet and 0 on Opus. **All 30 tasks
+still completed**, because every malformed call was caught by schema validation
+and recovered on retry.
+
+That is the dispatcher trade behaving exactly as designed, and it makes the
+validation layer load-bearing rather than defensive: on a weak model, disabling
+it would convert roughly half of all runs from "retried once" into "dispatched
+garbage."
 
 ### Native tool search failed on Haiku 4.5 — silently
 
-`native` completed **2 of 10 tasks**. On four of five scenarios it ran a single
-turn, made zero tool calls, and answered from nothing — ~1,780 prompt tokens,
-meaning no tool schemas were ever loaded.
+`native` completed **6 of 30 tasks** — a 20% success rate that held exactly
+across an initial 10 runs and a 30-run confirmation. On four of five scenarios
+it ran a single turn, made zero tool calls, and answered from nothing — ~1,780
+prompt tokens, meaning no tool schemas were ever loaded.
 
 The mechanism: `defer_loading` hides tools until the model *chooses* to search.
 Haiku 4.5 frequently does not choose to. There is no error — the request
@@ -164,7 +172,7 @@ per task where `signatures` needed none. The model does not lose the ability to
 choose correctly; it converts a recall problem into a retrieval problem and
 pays roughly 0.6 extra turns for it.
 
-**Round 3 tested this on two cheaper models and it held** — 40/40 across Opus 5,
+**Round 3 tested this on two cheaper models and it held** — 60/60 across Opus 5,
 Sonnet 5 and Haiku 4.5, zero hallucinated codes. What degrades with model
 strength is argument formatting, not tool choice (see round 3).
 
@@ -225,7 +233,7 @@ native search, it composes with it (native defers whole schemas; the library
 shrinks each one) and it works on providers that have no equivalent.
 
 **Round 3 added a second, sharper caveat**: native search also depends on the
-model electing to search. On Haiku 4.5 it completed 2/10 tasks, silently. Native
+model electing to search. On Haiku 4.5 it completed 6/30 tasks, silently. Native
 search is an excellent context-occupancy tool on frontier models and a liability
 below that tier.
 
@@ -252,12 +260,12 @@ below that tier.
 ## Next experiments
 
 1. ~~Sonnet 5 and Haiku 4.5 — does level 3 hold on cheaper models?~~ **Done
-   (round 3): yes, 40/40.**
+   (round 3): yes, 60/60.**
 2. A non-Claude model (GPT/Gemini), which would be the first real test of the
    model-agnostic claim.
 3. The `long-session` scenario (30+ turns) that round 1 dropped for cost — the
    product's strongest claim is still its least-measured one.
 4. Level 1 + `defer_loading` composed, versus each alone.
 5. A real MCP catalogue rather than the synthetic fixture.
-6. More reps on the Haiku `native` result. 2/10 across 5 scenarios is a large
-   effect and unlikely to be noise, but it rests on 10 runs.
+6. ~~More reps on the Haiku `native` result.~~ **Done: 6/30, the 20% rate
+   reproduced exactly at 3× the sample.**

@@ -23,12 +23,13 @@ export type Recommendation = {
  *    The real cost is turns (+0.6) and lookup round-trips (~1.7/run), so it is
  *    recommended by size, not withheld by superstition.
  *
- *    Re-tested on Sonnet 5 and Haiku 4.5: 40/40 correct, still zero
+ *    Re-tested on Sonnet 5 and Haiku 4.5: 60/60 correct, still zero
  *    hallucinated codes. What degrades on weaker models is argument
- *    *formatting* (malformed args 0 → 3 → 6), not tool *choice* — and every
- *    one was caught by `validate` and recovered. That is precisely why
- *    validation defaults to on; disabling it converts a recovered retry into a
- *    bad dispatch.
+ *    *formatting*, not tool *choice*: malformed arguments went 0-in-20 on
+ *    Opus, 3-in-10 on Sonnet, 17-in-30 on Haiku, and every one was caught by
+ *    `validate` and recovered — all tasks still completed. That is precisely
+ *    why validation defaults to on. On a weak model, disabling it converts
+ *    roughly half of all runs from a recovered retry into a bad dispatch.
  *  - **Level 2 is dominated.** More tokens, six times the malformed arguments,
  *    slower and dearer than level 3. It is never recommended. It stays in the
  *    API for callers who need real operation names on the wire.

@@ -62,12 +62,13 @@ Every arm completed every task — 48/48 tool calls correct, zero hallucinated
 names anywhere. See [docs/RESULTS.md](docs/RESULTS.md) for the per-scenario
 breakdown, the accuracy probe, and what these numbers do **not** establish.
 
-**Re-run on two cheaper models** (100 more runs, $0.31): L3 held at 40/40
+**Re-run on two cheaper models** (200 more runs, $1.46): L3 held at 60/60
 correct across Opus 5, Sonnet 5 and Haiku 4.5. What degrades on weaker models is
-argument *formatting* — malformed args went 0 → 3 → 6, every one caught by
-validation and retried — not tool *choice*.
+argument *formatting*, not tool *choice* — on Haiku, 17 of 30 runs produced a
+malformed argument, and all 30 tasks still completed because validation caught
+and retried every one. Keep `validate` on.
 
-In the same sweep, Anthropic's native tool search completed **2 of 10** tasks on
+In the same sweep, Anthropic's native tool search completed **6 of 30** tasks on
 Haiku 4.5, answering with no tool call at all on four of five scenarios. See
 [Composing with native tool search](#composing-with-anthropics-native-tool-search).
 
@@ -229,9 +230,9 @@ Two API constraints: at least one tool must stay non-deferred, and
 
 **One caveat, measured:** `defer_loading` hides tools until the model *elects to
 search*. On Claude Opus 5 it elects reliably (20/20 tasks). On Haiku 4.5 it
-often does not — 2/10 tasks, with four of five scenarios answered in a single
-turn and zero tool calls, at ~1,780 prompt tokens. No error is raised; the
-request succeeds and the answer is simply unaided.
+often does not — **6/30 tasks**, with four of five scenarios answered in a
+single turn and zero tool calls, at ~1,780 prompt tokens. No error is raised;
+the request succeeds and the answer is simply unaided.
 
 A dispatcher does not share this failure mode, for a structural reason: `t` and
 `q` are ordinary always-visible tools, so the model cannot forget to search —
