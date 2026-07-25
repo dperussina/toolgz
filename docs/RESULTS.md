@@ -1,11 +1,12 @@
 # Benchmark results
 
-**Models**: `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`
-**Settings**: `effort: "high"` (Opus/Sonnet; Haiku rejects it), `max_tokens: 8000`
-**Total**: 360 runs · $9.31 · 2026-07-25
-*(160 Opus 5 · 50 Sonnet 5 · 150 Haiku 4.5; includes 10 early smoke runs)*
-**Raw data**: `bench/results/*.jsonl` (committed) · **Verify**: `npx tsx bench/analyze.ts`
-**Reproduce**: `npm run bench -- --accuracy --reps=2 --model=<id>` *(costs money)*
+**Rounds 1–3** — Anthropic only: `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`
+**Round 4** — cross-provider: `claude-opus-5`, `gpt-5.6-sol`, `gemini-3.1-pro-preview`, `grok-4.5`
+**Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
+**Total**: 720 runs across rounds 1–4 · $19.87 · 2026-07-25
+*(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
+**Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze.ts` (rounds 1–3), `npx tsx bench/analyze-multi.ts` (round 4)
+**Reproduce**: `npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants` *(costs money)*
 
 Round 1 measured token savings across five workload shapes. Round 2 existed
 only because round 1 could not discriminate on accuracy — every arm scored
@@ -159,6 +160,85 @@ only appears below the frontier tier — at Opus 5, `native` scored a clean 20/2
 
 ---
 
+## Round 4 — all four providers, adapters verified against current docs
+
+Rounds 1–3 were Anthropic only. Round 4 runs the same five accuracy scenarios on four
+frontier models, 6 arms × 3 reps each: **360 runs, $10.56**.
+
+### The adapters had to be fixed first, and this invalidated earlier data
+
+Before publishing a cross-provider claim, each adapter was checked against current
+official documentation. All three non-Anthropic adapters were wrong, in ways that
+mattered:
+
+| Provider | Defect | Consequence |
+|---|---|---|
+| OpenAI | Forced `reasoning_effort: "none"` because `/v1/chat/completions` rejects tools + reasoning | The arm was not a frontier test at all. Migrated to `/v1/responses`, reasoning at `high`. |
+| Google | Sanitiser stripped JSON Schema keywords (`additionalProperties`, `$schema`, `$defs`, `const`, `oneOf`, …) that the Interactions API **accepts** | Measured a schema the library never emits — a correctness bug in the numbers. Migrated to the Interactions API, thinking at `high`. |
+| xAI | `reasoning_effort` never set; docs contradict themselves on whether it is supported | Resolved empirically (it is honoured; default is already `high`); now pinned explicitly. |
+
+A measurement flaw of our own was also fixed: cached input was billing at full input
+price, overstating cost for providers that cache aggressively. `Provider.priceCachedIn`
+now carries the discount.
+
+The pre-fix cross-provider results are in `bench/results/superseded/` and must not be
+cited.
+
+### Results
+
+| Provider | Model | Tool block | Prompt tokens | Tasks | Malformed | Latency | Cost |
+|---|---|---:|---:|:-:|---:|---:|---:|
+| Anthropic | `claude-opus-5` | 9,242 → 1,284 | 32,513 → 5,850 (−82%) | 15/15 | 4 | 14.2s → 13.7s | −76% |
+| Google | `gemini-3.1-pro-preview` | 5,264 → 732 | 10,948 → 2,182 (−80%) | 15/15 | 0 | 6.1s → 5.3s | −62% |
+| xAI | `grok-4.5` | 6,421 → 775 | 15,201 → 2,988 (−80%) | 15/15 | 1 | 5.6s → 12.8s | −60% |
+| OpenAI | `gpt-5.6-sol` | 2,752 → 573 | 7,492 → 2,338 (−69%) | 15/15 | 0 | 6.1s → 6.2s | **+15%** |
+
+Arm shown is level 3 at the shipped default (`mapStyle: "name+required"`) against
+uncompressed. Token and dollar magnitudes are **not** comparable across providers —
+different tokenizers, different prices. Compare arms within a provider.
+
+### Level 3 wins on every provider
+
+Ordering by prompt tokens is stable in the sense that matters: the level-3 variants beat
+level 2, which beats level 1, which beats uncompressed, on all four. The exact ordering
+*among* level-3 map styles differs by provider, which is why `analyze-multi.ts` reports
+ranking stability rather than averaging it away.
+
+### Bare names fail on grok-4.5 — deterministically
+
+`mapStyle: "name"` scored **57/60** overall: perfect on Anthropic, Google and OpenAI, and
+**12/15 on grok-4.5**. The failures were not noise. All three were the same scenario
+(`acc-cross-product`), all with `turns=1`, zero tool calls, zero malformed arguments — the
+model read the map and answered without dispatching. No error was raised.
+
+`name+required` and `terse` both scored **60/60**. The default is `name+required`, because
+it also cut lookup round-trips (0.1–0.7 per task vs 0.4–1.4) and was the fastest or
+near-fastest arm on three of four providers.
+
+This is the same failure shape as `defer_loading` on Haiku 4.5 (round 3): when discovery is
+*optional*, a model can decline to discover. A bare-name map makes dispatch feel optional in
+the same way; naming the arguments makes it concrete.
+
+### Context is reclaimed; money is not
+
+Prompt tokens fell on all four. Cost fell on three and **rose 15% on OpenAI** — the extra
+dispatcher turns cost more in reasoning tokens than the smaller prompt recovers.
+
+This is the sharpest correction round 4 makes to the earlier rounds, which measured cost
+savings with reasoning effectively off on some arms. **The defensible claim is
+context-window occupancy, not spend.** Anyone optimising for bill should measure their own
+workload.
+
+### One anomaly, not explained
+
+`minified-plus` on grok-4.5 averaged **12.8s against 5.6s uncompressed** — the only
+latency regression anywhere in the sweep, and it contradicts the same arm being fastest on
+Anthropic and Google. n=15, so it may be sampling noise or provider-side variance. It is
+recorded rather than smoothed over, and wants more reps before anyone relies on
+level-3 latency on xAI.
+
+---
+
 ## Findings
 
 ### 1. Name minification did not cost accuracy — the design's central worry was wrong
@@ -241,9 +321,9 @@ below that tier.
 
 ## What these numbers do not establish
 
-- **One model family.** Opus 5, Sonnet 5 and Haiku 4.5 — all Claude. No
-  GPT/Gemini/Grok data, so the model-agnostic claim rests on the design being
-  provider-neutral, not on measurement.
+- ~~**One model family.**~~ Round 4 added `gpt-5.6-sol`, `gemini-3.1-pro-preview`
+  and `grok-4.5`, so the model-agnostic claim is now measured rather than
+  asserted. Still four vendors, one language, one synthetic catalogue.
 - **Haiku ran without an effort pin** (the API rejects `effort` on it), so that
   column differs from the others by more than the model.
 - **One catalogue.** 100 synthetic-but-realistic MCP-style tools across 9
@@ -261,10 +341,13 @@ below that tier.
 
 1. ~~Sonnet 5 and Haiku 4.5 — does level 3 hold on cheaper models?~~ **Done
    (round 3): yes, 60/60.**
-2. A non-Claude model (GPT/Gemini), which would be the first real test of the
-   model-agnostic claim.
+2. ~~A non-Claude model.~~ **Done (round 4).**
 3. The `long-session` scenario (30+ turns) that round 1 dropped for cost — the
    product's strongest claim is still its least-measured one.
+7. More reps on level-3 latency on grok-4.5, where one arm regressed to 12.8s
+   against a 5.6s baseline with no explanation.
+8. Cost on OpenAI: whether the +15% closes at lower reasoning effort, since the
+   extra turns are what drive it.
 4. Level 1 + `defer_loading` composed, versus each alone.
 5. A real MCP catalogue rather than the synthetic fixture.
 6. ~~More reps on the Haiku `native` result.~~ **Done: 6/30, the 20% rate

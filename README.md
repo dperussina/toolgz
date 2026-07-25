@@ -1,12 +1,13 @@
-# toolgz
+<h1>toolgz</h1>
 
-Shrink LLM tool definitions without making the model dumber.
+<p><strong>Your agent spends 30–50k tokens of context on tool definitions before the user types a word. toolgz gets ~80% of it back.</strong></p>
 
-An agent with 15 MCP servers can burn 30–50k tokens of context window on tool
-definitions before the user types a word. This library compresses that block
-and translates the model's calls back, so nothing downstream changes.
-
-Model-agnostic, provider-agnostic, zero runtime dependencies, no network calls.
+<p>
+<a href="#measured-results">720 benchmark runs</a> ·
+4 frontier models ·
+zero runtime dependencies ·
+<a href="docs/BEFORE-AFTER.md">generated before/after</a>
+</p>
 
 ```bash
 npm install toolgz
@@ -14,293 +15,202 @@ npm install toolgz
 
 ---
 
-## Quick start
+## The problem
+
+You connect a few MCP servers. Each ships 20–50 tools. Every tool is a JSON Schema with a
+sentence of prose per parameter. That block renders at the **front of every single request**.
+
+A realistic tool definition is ~420 tokens, and roughly 400 of them are prose the model
+doesn't need in order to pick correctly. Fifty tools is 20k tokens. A hundred is 40k.
+
+Prompt caching makes those tokens *cheap*. It does not make them take up less *room*.
+Reclaiming the room is what this does.
+
+## The fix, in three lines
 
 ```ts
 import { compress, forAnthropic } from "toolgz";
 
-const c = compress(myTools);                    // level 1 by default
-const { tools, system } = forAnthropic(c);      // adds the cache breakpoint
-
-const res = await client.messages.create({
-  model: "claude-opus-5",
-  max_tokens: 8000,
-  system: [{ type: "text", text: SYSTEM_PROMPT }, ...(system ?? [])],
-  tools,
-  messages,
-});
-
-for (const block of res.content) {
-  if (block.type !== "tool_use") continue;
-  const r = c.resolve(block.name, block.input);
-  if (r.kind === "call")  await myDispatch(r.name, r.args);  // real name, real args
-  if (r.kind === "meta")  feedBack(r.result);                // model asked a lookup question
-  if (r.kind === "error") feedBack(r.message, { isError: true });
-}
+const c = compress(myTools);                  // your existing MCP/SDK tool array
+const { tools, system } = forAnthropic(c);    // send these instead
 ```
 
-`myTools` is whatever your MCP server or SDK already produces — `{ name,
-description, inputSchema }`. Both `inputSchema` and `input_schema` are accepted.
+Then translate the model's call back before you dispatch:
+
+```ts
+const r = c.resolve(block.name, block.input);
+if (r.kind === "call") await myDispatch(r.name, r.args);   // real name, real args
+```
+
+`myDispatch` gets exactly what it got before. **Nothing downstream changes.**
 
 ---
 
 ## Measured results
 
-Claude Opus 5, `effort: "high"`, **150 runs** across 10 scenarios, $7.72.
-Raw data is committed in `bench/results/`; recompute it yourself with
-`npx tsx bench/analyze.ts`. Reproduce with `npm run bench`.
+Four frontier models, six strategies, five tool-selection tasks, 3 reps —
+**360 runs** on the current sweep (720 including the earlier Anthropic-only rounds).
+Every raw per-run record is committed in [`bench/results/`](bench/results/); recompute any
+figure with `npx tsx bench/analyze-multi.ts`.
 
-| Strategy | Tool block | Avg prompt | Turns | Malformed args | Latency | Cost |
-|---|---:|---:|---:|---:|---:|---:|
-| uncompressed | 10,035 | 41,336 | 3.5 | 0 | 15.4s | $1.86 |
-| **L1 signatures** | 7,322 | 30,475 | 3.5 | 0 | 14.4s | $1.54 |
-| Anthropic native search | 1,644 | 16,430 | 3.1 | 0 | 16.2s | $2.19 |
-| L2 namespace collapse | 2,086 | 13,560 | 4.7 | **12** | 17.4s | $1.27 |
-| **L3 minified** | **1,146** | **7,432** | 4.1 | 2 | **12.9s** | **$0.86** |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/savings-dark.svg">
+  <img src="docs/img/savings-light.svg" alt="Prompt tokens saved versus uncompressed tool definitions, by compression level, for each of four providers">
+</picture>
 
-Every arm completed every task — 48/48 tool calls correct, zero hallucinated
-names anywhere. See [docs/RESULTS.md](docs/RESULTS.md) for the per-scenario
-breakdown, the accuracy probe, and what these numbers do **not** establish.
+| Provider | Model | Tool block | Prompt tokens | Tasks |
+|---|---|---:|---:|:-:|
+| Anthropic | `claude-opus-5` | 9,242 → **1,284** | 32,513 → **5,850** (−82%) | 15/15 |
+| Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,182** (−80%) | 15/15 |
+| xAI | `grok-4.5` | 6,421 → **775** | 15,201 → **2,988** (−80%) | 15/15 |
+| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,492 → **2,338** (−69%) | 15/15 |
 
-**Re-run on two cheaper models** (200 more runs, $1.46): L3 held at 60/60
-correct across Opus 5, Sonnet 5 and Haiku 4.5. What degrades on weaker models is
-argument *formatting*, not tool *choice* — on Haiku, 17 of 30 runs produced a
-malformed argument, and all 30 tasks still completed because validation caught
-and retried every one. Keep `validate` on.
+Reasoning is enabled on all four at high effort, so this is a like-for-like frontier
+comparison. **60/60 tasks completed, zero hallucinated tool names.**
 
-In the same sweep, Anthropic's native tool search completed **6 of 30** tasks on
-Haiku 4.5, answering with no tool call at all on four of five scenarios. See
-[Composing with native tool search](#composing-with-anthropics-native-tool-search).
+### It does not make the model worse
 
-Four things worth pulling out:
+That was the thing to disprove, and we tried hard to. The task suite is built from
+deliberately confusable tool clusters — `search_issues` vs `list_issues`, comment-vs-update,
+approve-vs-merge, the same three products side by side — where the correct choice turns on
+the tool name that compression takes away.
 
-- **L3 wins on every axis except turn count.** −89% tool block, −82% prompt
-  tokens, −54% cost, and it was the *fastest* arm despite +0.6 turns, because
-  each turn is so much smaller.
-- **Minification did not cost accuracy.** That was the design's central worry
-  and the measurement contradicted it: 48/48 correct across clusters built
-  specifically to confuse a code map. The model converts a recall problem into
-  a retrieval problem — ~1.7 lookup calls per task — and gets there anyway.
-- **L1 is free.** −26% prompt tokens, zero malformed arguments, zero extra
-  turns, latency slightly better than control. No measured downside at all.
-- **L2 is dominated and Anthropic's native search costs more than not
-  compressing.** L2 produced six times L3's malformed arguments for worse
-  compression. Native search has the second-smallest tool block but the highest
-  bill of any arm — its server-side search runs its own inference. Tokens and
-  dollars are not the same axis.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/reliability-dark.svg">
+  <img src="docs/img/reliability-light.svg" alt="Task completion by level-3 map style and provider, showing bare names failing on grok-4.5">
+</picture>
 
----
+The model doesn't lose the ability to choose — it converts a recall problem into a retrieval
+problem and looks up what it needs. The default map style exists because of the red cell:
+bare tool names failed on `grok-4.5` **deterministically**, 3 of 3 attempts on one scenario,
+answering with zero tool calls and no error raised. Naming the required arguments fixed it.
 
-## Levels
+### Be honest about cost
 
-```ts
-compress(tools, { level: 0 | 1 | 2 | 3 })
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/cost-dark.svg">
+  <img src="docs/img/cost-light.svg" alt="Prompt token reduction always positive; cost change negative on three providers and positive on OpenAI">
+</picture>
 
-| Level | What it does | Names | Constrained decoding | Use when |
-|---|---|---|---|---|
-| **0** | Passthrough | real | native | A/B control inside your own app |
-| **1** | Flatten JSON Schema to signature lines | real | native | **Default.** Small or sparse tool sets. Zero measured downside. |
-| 2 | Collapse namespaces into compound tools | real | middleware | You need real op names on the wire. Otherwise skip — dominated by 3. |
-| **3** | Single dispatcher + opaque codes | codes | middleware | **Large, deep tool sets.** Biggest win; costs turns, not accuracy. |
+Context is always reclaimed. **Money is not.** On three providers the bill drops 60–76%. On
+OpenAI it goes **up 15%** — the dispatcher's extra turns cost more in reasoning tokens than
+the smaller prompt saves.
 
-Each level is a superset of the one below. The default is level 1 because a
-library should not change your agent's turn profile on `npm install`;
-`recommendLevel()` will tell you when level 3 is worth it.
-
-### Level 1 — what actually shrinks
-
-The tool *name* is not the cost. The JSON Schema envelope is.
-
-```jsonc
-// before — 420 tokens
-{ "name": "github_create_pull_request",
-  "description": "Create a new pull request in a GitHub repository.",
-  "input_schema": { "type": "object", "properties": {
-      "owner": { "type": "string", "description": "The account owner of the repository." },
-      "repo":  { "type": "string", "description": "The name of the repository..." },
-      /* … */ },
-    "required": ["owner","repo","title","head","base"],
-    "additionalProperties": false,
-    "$schema": "http://json-schema.org/draft-07/schema#" } }
-```
-
-```
-// after — description becomes one line, schema keeps only what constrains sampling
-github_create_pull_request(owner,repo,title,head,base,body?,draft?) — Create a new pull request in a GitHub repository.
-```
-
-Enums, types, `required` and item types survive, so the provider's constrained
-sampler keeps working. Prose descriptions and `$schema` boilerplate do not.
-
-### Level 3 — the trade
-
-One dispatcher (`t`) plus one lookup tool (`q`). The map lives in your system
-prompt behind a cache breakpoint:
-
-```
-<toolmap>
-a0 github_create_pull_request
-a1 github_list_issues
-b0 slack_post_message
-</toolmap>
-```
-
-The model calls `t(f="a0", a={...})`. `q(c="a0")` expands a code to its full
-signature and description; `q(s="pull request")` searches.
-
-**What you give up:** provider-side constrained decoding. At levels 2 and 3 the
-model fills a generic `object` argument bag, so the sampler is no longer
-enforcing your schema. This library validates against the original schema
-instead and returns a model-readable error.
-
-That cost is measurable: levels 0, 1 and native search produced **zero**
-malformed arguments across 150 runs; levels 2 and 3 produced all 14 between
-them. Every one was caught by validation and recovered on retry — which is part
-of why the dispatcher levels use more turns.
-
-**What you do not give up, contrary to expectation:** selection accuracy. Level
-3 scored 48/48 with zero hallucinated names, including on clusters built
-specifically to confuse a code map. Benchmark it on your own tasks before
-adopting it — this is one model and one catalogue — but the feared failure mode
-did not appear.
+If your constraint is context window, this wins everywhere. If your constraint is spend,
+measure it on your own workload first.
 
 ---
 
-## Picking a level
+## Which level to use
+
+Ask the library. It returns 1 or 3, never 2, and explains itself:
 
 ```ts
 import { recommendLevel } from "toolgz";
-
 const { level, reason } = recommendLevel(myTools);
-console.log(level, reason);
-// 3  "100 tools across 9 namespaces (11.1 ops each) — deep enough that a single
-//     dispatcher plus a cached code map beats per-tool definitions. Measured at
-//     ~82% fewer prompt tokens with no accuracy penalty, at the cost of roughly
-//     0.6 extra turns and 1.7 lookup calls per task. If your workload is
-//     latency-critical rather than context-critical, drop to level 1."
 ```
 
-It returns 1 or 3, never 2, and always explains itself. Two crossovers worth
-knowing, both measured:
+| Level | Sends | Real names | Provider schema enforcement | Use when |
+|:-:|---|:-:|:-:|---|
+| **1** | one native tool each, signature-line descriptions | yes | **yes** | **default.** Small or wide-and-sparse tool sets. Zero measured downside. |
+| 2 | one compound tool per namespace | yes | no | you need readable op names on the wire. Otherwise skip. |
+| **3** | one dispatcher + one lookup tool | codes | no | **large, deep tool sets.** The 80% number above. |
 
-- **The dispatcher's overhead is per-namespace, not per-tool.** A wide, sparse
-  set (20 namespaces, 1 op each) is *larger* under namespace collapse than at
-  level 1. A deep set is much smaller. Tool count alone predicts the wrong
-  level — the threshold is 4 ops per namespace.
-- **Level 3 is smallest at every tool count** — but only after the map line was
-  reduced to bare names. Carrying prose descriptors in the map made level 3
-  *larger* than level 2 at 60 tools.
+*(Level 0 is a passthrough, for A/B testing inside your own app.)*
+
+**Level 1 is free** — measured: fewer tokens, zero malformed arguments, zero extra turns,
+latency no worse. **Level 2 is dominated by level 3** on every axis, including producing more
+malformed arguments; it is not a stepping stone.
+
+### What level 3 actually looks like
+
+Two tools on the wire regardless of how many you start with, and a map in the system prompt
+behind a cache breakpoint:
+
+```
+<toolmap>
+a0 github_create_issue owner,repo,title
+a1 github_search_issues q
+b0 slack_post_message channel,text
+</toolmap>
+```
+
+The model calls `t(f="a0", a={…})`, and `q(c="a0")` expands a code to its full signature when
+it needs the optional parameters.
+
+**The trade:** at levels 2–3 the model fills a generic argument object, so the provider's
+sampler no longer enforces your schema. toolgz validates against your *original* schema and
+returns a model-readable error instead. That is why `validate` defaults to on — leave it on.
+
+**Every artifact above is generated by running the library** — see
+**[docs/BEFORE-AFTER.md](docs/BEFORE-AFTER.md)** for the full tools array and system prompt,
+before and after, at every level, with real token counts and a live encode → decode round
+trip. A test asserts that file matches the code, so it cannot drift.
 
 ---
+
+## Documentation
+
+| | |
+|---|---|
+| **[Complete guide](docs/GUIDE.md)** | Install → working agent loop. Per-provider setup for all four, prompt caching, MCP aggregation, troubleshooting. Start here. |
+| **[Before / after](docs/BEFORE-AFTER.md)** | Generated, not illustrated. Both artifacts toolgz modifies, at every level. |
+| **[Full results](docs/RESULTS.md)** | Every number, the methodology, and what it does **not** establish. |
 
 ## Providers
 
 ```ts
-import { forAnthropic, forOpenAI, forGemini } from "toolgz";
+import { forAnthropic, forOpenAI, forOpenAIResponses, forGemini } from "toolgz";
 ```
 
-| Adapter | Handles |
-|---|---|
-| `forAnthropic(c, { cache, ttl })` | Places one `cache_control` breakpoint on the last eligible tool. Skips tools carrying `defer_loading` — the API rejects that pairing. |
-| `forOpenAI(c)` | Wraps in `{type:"function",function:{…}}`. Drops Anthropic server-side tools. Prefix caching is automatic, so there is no breakpoint to place. |
-| `forGemini(c)` | Emits one `functionDeclarations` array, stripping keywords Gemini rejects. |
+Pure functions; they never mutate what you pass them.
 
-Adapters are pure functions and never mutate the `CompressResult`.
+| Adapter | Endpoint | Handles |
+|---|---|---|
+| `forAnthropic` | Messages API | Places one `cache_control` breakpoint; skips deferred tools, which the API rejects |
+| `forOpenAIResponses` | `/v1/responses` | Flat tool shape. **Required if you want tools *and* reasoning** |
+| `forOpenAI` | `/v1/chat/completions` | Nested tool shape |
+| `forGemini` | `generateContent` | One `functionDeclarations` array |
 
----
-
-## Composing with Anthropic's native tool search
-
-Anthropic ships server-side tool search (`tool_search_tool_regex_20251119` +
-`defer_loading: true`). It defers *whole schemas*; this library shrinks *each
-schema*. They are orthogonal — level 1 output can carry `defer_loading` and get
-both effects:
-
-```ts
-const c = compress(myTools, { level: 1 });
-const tools = [
-  { type: "tool_search_tool_regex_20251119", name: "tool_search_tool_regex" },
-  ...(c.tools as any[]).map((t, i) => (i < 5 ? t : { ...t, defer_loading: true })),
-];
-```
-
-Two API constraints: at least one tool must stay non-deferred, and
-`cache_control` cannot go on a deferred tool. `forAnthropic()` handles the second.
-
-**One caveat, measured:** `defer_loading` hides tools until the model *elects to
-search*. On Claude Opus 5 it elects reliably (20/20 tasks). On Haiku 4.5 it
-often does not — **6/30 tasks**, with four of five scenarios answered in a
-single turn and zero tool calls, at ~1,780 prompt tokens. No error is raised;
-the request succeeds and the answer is simply unaided.
-
-A dispatcher does not share this failure mode, for a structural reason: `t` and
-`q` are ordinary always-visible tools, so the model cannot forget to search —
-searching is the only thing on offer. Deferred loading makes discovery
-*optional*; a dispatcher makes it *the entry point*.
-
-Rule of thumb: compose with native search on frontier models; prefer level 3
-alone below that tier.
+xAI is OpenAI-compatible — use `forOpenAI` with `baseURL: "https://api.x.ai/v1"`.
 
 ---
 
-## What this library does not do
+## What this does not do
 
-- It does not beat native tool search on tool-block size on Anthropic. It
-  composes with it, works on providers that have no equivalent, and — measured
-  on Haiku 4.5 — is markedly more reliable below the frontier tier.
-- It has not been measured on a non-Claude model. The design is provider-neutral
-  and adapters exist for OpenAI and Gemini, but the model-agnostic claim rests
-  on that design, not on data.
-- It does not reduce your bill just because it reduces tokens. Cached tool
-  blocks already read at ~0.1×; the win this library targets is **context-window
-  occupancy**.
-- It does not make level 3 safe. It makes level 3 *measurable*.
-
----
-
-## API
-
-| Export | |
-|---|---|
-| `compress(tools, opts?)` | → `CompressResult` |
-| `recommendLevel(tools, namespaceOf?)` | → `{ level, reason, toolCount, namespaceCount, opsPerNamespace }` |
-| `forAnthropic` / `forOpenAI` / `forGemini` | provider adapters |
-| `signatureLine(tool, nameOverride?)` | render one signature |
-| `flattenSchema(schema)` | strip prose from a JSON Schema |
-
-`CompressOptions`: `level`, `namespaceOf`, `aliasOf`, `searchLimit`, `validate`.
-
-`CompressResult`: `tools`, `systemPreamble`, `cachePreamble`, `resolve()`,
-`codeFor()`, `stats`.
-
-`resolve()` returns a discriminated union — `{kind:"call"|"meta"|"error"}`.
-Errors carry `recoverable: boolean` and a message written for the model to read.
-
----
+- **It does not reduce your bill just because it reduces tokens.** Measured: cheaper on
+  three providers, 15% dearer on OpenAI. The claim is context-window occupancy.
+- **It does not beat Anthropic's native tool search on tool-block size.** It composes with
+  it, works where there is no equivalent, and is more reliable below the frontier tier —
+  `defer_loading` completed only 6/30 tasks on Haiku 4.5, silently, because it lets the model
+  *choose* whether to discover tools. A dispatcher makes discovery the entry point.
+- **It has not been measured on a non-frontier model at level 3.** On Haiku 4.5, argument
+  errors rose sharply (17 of 30 runs) — all caught and retried, no task lost, but that is the
+  known edge.
+- **It is not magic on ten tools.** Under ~15 tools there is little to reclaim;
+  `recommendLevel()` will tell you so.
 
 ## Determinism
 
-`compress()` is referentially transparent: same tools in, byte-identical
-payload out. Tools are sorted by name, never left in iteration order.
+`compress()` is referentially transparent: same tools in, byte-identical payload out. Tools
+are sorted, never left in iteration order.
 
-This is a correctness property, not tidiness. Prompt caching is a prefix match —
-one reordered tool silently invalidates the cache and erases the savings. There
-is a test asserting byte-identical output across calls; it does not get deleted.
-
----
+This is a correctness property, not tidiness — prompt caching is a prefix match, so one
+reordered tool silently re-bills your whole prompt. There is a test asserting byte-stability,
+and it does not get deleted.
 
 ## Development
 
 ```bash
-npm test              # 70 unit tests, no network
-npm run bench         # full sweep against the live API (~$4, ~25 min)
-npm run bench -- --accuracy --reps=4
-npm run brain -- report
+npm test        # 131 tests, offline, no cost
+npm run build   # tsc → dist/ with .d.ts
+
+npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money
+npx tsx bench/analyze-multi.ts
+npx tsx docs/generate-examples.ts
 ```
 
-See [AGENTS.md](AGENTS.md) for methodology and
-[.specify/memory/constitution.md](.specify/memory/constitution.md) for the
-principles specs are checked against.
+Methodology and repo conventions: [AGENTS.md](AGENTS.md).
+Principles specs are checked against: [.specify/memory/constitution.md](.specify/memory/constitution.md).
 
 MIT

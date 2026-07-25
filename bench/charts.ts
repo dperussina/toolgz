@@ -226,63 +226,117 @@ function chartReduction(rows: Row[], t: Theme): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Prompt token savings by compression level, per provider">${parts.join("")}</svg>`;
 }
 
-// ── chart 2: the tradeoff — context saved vs argument errors ────────────────
-function chartTradeoff(rows: Row[], t: Theme): string {
-  const arms = ARM_ORDER.filter((a) => rows.some((r) => r.arm === a));
+// ── chart 2: reliability of the level-3 map styles ─────────────────────────
+function chartReliability(rows: Row[], t: Theme): string {
+  const styles = ["minified", "minified-terse", "minified-plus"];
+  const providers = ["anthropic", "gemini", "openai", "xai"];
   const W = 760;
-  const rowH = 30;
-  const H = 118 + arms.length * rowH + 52;
-  const labelW = 128;
-  const colA = labelW + 40;
-  const colAW = 250;
-  const colB = colA + colAW + 74;
-  const colBW = 150;
-
-  const base = mean(
-    rows.filter((r) => r.arm === "control").map((r) => r.totalPromptTokens),
-  );
-  const maxMal = Math.max(
-    1,
-    ...arms.map((a) => rows.filter((r) => r.arm === a).reduce((s, r) => s + r.malformedArgs, 0)),
-  );
+  const cell = 64;
+  const rowH = 34;
+  const labelW = 168;
+  const H = 130 + styles.length * rowH + 58;
 
   const parts: string[] = [
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
-    `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">The trade: context reclaimed vs. arguments the model got wrong</text>`,
+    `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Bare tool names are not always enough signal to dispatch</text>`,
     wrapText(
-      "All four providers pooled. Every malformed argument was caught by schema validation and retried; no task failed because of one.",
+      "Tasks completed, 15 per cell. All three styles save roughly the same tokens, so reliability is what separates them - and only the bare-name map fails.",
       20, 52, W - 40, 12.5, t.ink2,
     ),
-    `<text x="${colA}" y="90" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}">PROMPT TOKENS SAVED</text>`,
-    `<text x="${colB}" y="90" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}">MALFORMED ARGUMENTS</text>`,
   ];
 
-  arms.forEach((arm, j) => {
-    const rs = rows.filter((r) => r.arm === arm);
-    const v = mean(rs.map((r) => r.totalPromptTokens));
-    const red = base ? Math.max(0, ((base - v) / base) * 100) : 0;
-    const mal = rs.reduce((s, r) => s + r.malformedArgs, 0);
+  providers.forEach((p, i) => {
+    parts.push(
+      `<text x="${labelW + 20 + i * cell + cell / 2}" y="${92}" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}" text-anchor="middle">${esc((PROVIDER_LABEL[p] ?? p).toUpperCase())}</text>`,
+    );
+  });
+
+  styles.forEach((arm, j) => {
     const y = 104 + j * rowH;
+    parts.push(
+      `<text x="${labelW}" y="${y + 20}" font-family="${FONT}" font-size="12.5" fill="${t.ink2}" text-anchor="end">${esc(ARM_LABEL[arm] ?? arm)}</text>`,
+    );
+    providers.forEach((p, i) => {
+      const rs = rows.filter((r) => r.provider === p && r.arm === arm);
+      const ok = rs.filter((r) => r.taskSuccess).length;
+      const perfect = rs.length > 0 && ok === rs.length;
+      const x = labelW + 20 + i * cell;
+      parts.push(
+        `<rect x="${x + 4}" y="${y + 4}" width="${cell - 10}" height="22" rx="4" fill="${perfect ? t.good : t.warn}" opacity="${perfect ? 0.14 : 0.18}"/>`,
+        `<text x="${x + (cell - 6) / 2}" y="${y + 20}" font-family="${FONT}" font-size="12" font-weight="600" fill="${perfect ? t.good : t.warn}" text-anchor="middle">${ok}/${rs.length}</text>`,
+      );
+    });
+    const tot = rows.filter((r) => r.arm === arm);
+    const okAll = tot.filter((r) => r.taskSuccess).length;
+    parts.push(
+      `<text x="${labelW + 20 + providers.length * cell + 16}" y="${y + 20}" font-family="${FONT}" font-size="12.5" font-weight="600" fill="${okAll === tot.length ? t.good : t.warn}">${okAll}/${tot.length}</text>`,
+    );
+  });
+
+  parts.push(
+    `<text x="${labelW + 20 + providers.length * cell + 16}" y="92" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}">TOTAL</text>`,
+    ...[
+      wrapText(
+        "Bare names failed on grok-4.5 deterministically - one scenario, 3 of 3 attempts, answered with zero tool calls and no error raised. Naming the required arguments fixed it, and is the shipped default.",
+        20, H - 40, W - 40, 10.5, t.muted,
+      ),
+    ],
+  );
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Task completion by level-3 map style and provider">${parts.join("")}</svg>`;
+}
+
+// ── chart 3: context is always reclaimed; money is not ─────────────────────
+function chartCost(rows: Row[], t: Theme): string {
+  const providers = ["anthropic", "gemini", "openai", "xai"];
+  const W = 760;
+  const rowH = 40;
+  const labelW = 96;
+  const H = 128 + providers.length * rowH + 58;
+  const midX = labelW + 300;
+
+  const parts: string[] = [
+    `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
+    `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Context is always reclaimed. Money is not.</text>`,
+    wrapText(
+      "Level 3 (shipped default) vs uncompressed, reasoning enabled on all four. Prompt tokens always fall; spend depends on how much the model reasons across the extra turns.",
+      20, 52, W - 40, 12.5, t.ink2,
+    ),
+    `<text x="${labelW + 20}" y="98" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}">PROMPT TOKENS</text>`,
+    `<text x="${midX}" y="98" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.muted}">COST (green = cheaper, red = dearer)</text>`,
+  ];
+
+  providers.forEach((p, i) => {
+    const y = 112 + i * rowH;
+    const pr = rows.filter((r) => r.provider === p);
+    const baseTok = mean(pr.filter((r) => r.arm === "control").map((r) => r.totalPromptTokens));
+    const armTok = mean(pr.filter((r) => r.arm === "minified-plus").map((r) => r.totalPromptTokens));
+    const tokPct = baseTok ? ((baseTok - armTok) / baseTok) * 100 : 0;
+
+    const baseCost = pr.filter((r) => r.arm === "control").reduce((s, r) => s + r.costUsd, 0);
+    const armCost = pr.filter((r) => r.arm === "minified-plus").reduce((s, r) => s + r.costUsd, 0);
+    const costPct = baseCost ? ((armCost - baseCost) / baseCost) * 100 : 0;
+    const saving = costPct <= 0;
 
     parts.push(
-      `<text x="${labelW + 20}" y="${y + 14}" font-family="${FONT}" font-size="12" fill="${t.ink2}" text-anchor="end">${esc(ARM_LABEL[arm] ?? arm)}</text>`,
-      red < 0.5
-        ? ""
-        : `<rect x="${colA}" y="${y + 3}" width="${Math.max(3, (colAW * red) / 100)}" height="14" rx="4" fill="${t.series}"/>`,
-      `<text x="${colA + colAW + 10}" y="${y + 14}" font-family="${FONT}" font-size="11.5" font-weight="600" fill="${t.ink}">${red.toFixed(0)}%</text>`,
-      `<rect x="${colB}" y="${y + 3}" width="${mal === 0 ? 0 : Math.max(3, (colBW * mal) / maxMal)}" height="14" rx="4" fill="${mal === 0 ? t.good : t.warn}"/>`,
-      `<text x="${colB + (mal === 0 ? 0 : Math.max(3, (colBW * mal) / maxMal)) + 8}" y="${y + 14}" font-family="${FONT}" font-size="11.5" font-weight="600" fill="${mal === 0 ? t.good : t.ink}">${mal === 0 ? "none" : mal}</text>`,
+      `<text x="${labelW}" y="${y + 18}" font-family="${FONT}" font-size="12.5" fill="${t.ink2}" text-anchor="end">${esc(PROVIDER_LABEL[p] ?? p)}</text>`,
+      `<rect x="${labelW + 20}" y="${y + 4}" width="${Math.max(3, (180 * tokPct) / 100)}" height="16" rx="4" fill="${t.series}"/>`,
+      `<text x="${labelW + 26 + (180 * tokPct) / 100}" y="${y + 17}" font-family="${FONT}" font-size="11.5" font-weight="600" fill="${t.ink}">-${tokPct.toFixed(0)}%</text>`,
+      // Cost: one right-extending bar of magnitude, colour carries direction and
+      // the label carries the sign. A signed axis collided with the column left.
+      `<rect x="${midX}" y="${y + 4}" width="${Math.max(3, (140 * Math.abs(costPct)) / 100)}" height="16" rx="4" fill="${saving ? t.good : t.warn}"/>`,
+      `<text x="${midX + 6 + (140 * Math.abs(costPct)) / 100}" y="${y + 17}" font-family="${FONT}" font-size="11.5" font-weight="600" fill="${saving ? t.good : t.warn}">${saving ? "" : "+"}${costPct.toFixed(0)}%</text>`,
     );
   });
 
   parts.push(
     wrapText(
-      "Levels 2 and 3 route calls through a generic argument object, which gives up the provider's constrained sampler. That is the cost; validation is what covers it.",
-      20, H - 30, W - 40, 10.5, t.muted,
+      "On OpenAI the extra dispatcher turns cost more in reasoning tokens than the smaller prompt saves. The context-window win holds regardless - that is the claim this library makes.",
+      20, H - 40, W - 40, 10.5, t.muted,
     ),
   );
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Context saved versus malformed arguments by compression level">${parts.join("")}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Prompt token reduction versus cost change by provider">${parts.join("")}</svg>`;
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -294,7 +348,8 @@ if (!rows.length) {
 
 const charts: [string, (r: Row[], t: Theme) => string][] = [
   ["savings", chartReduction],
-  ["tradeoff", chartTradeoff],
+  ["reliability", chartReliability],
+  ["cost", chartCost],
 ];
 
 for (const [name, fn] of charts) {
