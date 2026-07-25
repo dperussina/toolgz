@@ -32,6 +32,7 @@ import {
   terseDescriptor,
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
+import { nearest } from "./runtime/similar.js";
 
 export * from "./types.js";
 export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/index.js";
@@ -155,6 +156,51 @@ export function compress(
         toolToCode.set(t.name, code);
       });
     }
+  }
+
+  /**
+   * Separator-insensitive lookup for map keys.
+   *
+   * Observed on gpt-5.6-sol against the `grouped` style, on real MCP tools: the
+   * map prints `gdrive: sheets_append_rows(...)` and the model reassembled the
+   * name as `gdrive.sheets_append_rows` — a DOT, not the underscore the real name
+   * uses. Every single failure in that arm was this, systematically:
+   * coding.task_result, reverse.geocode, scorecard.lf_daily, get.label_data.
+   *
+   * Joining a namespace and an operation with `.` is the near-universal
+   * convention for qualified identifiers, so the model's inference is reasonable
+   * and ours was simply too strict. Rejecting it burned six turns per task and
+   * cost more than the smaller map saved.
+   *
+   * So we compare with every separator stripped, which accepts `.`, `:`, `/`,
+   * `-`, a space or nothing at all. Registered ONLY where the normalised form is
+   * unambiguous: if two real tools normalise alike, neither gets an alias and the
+   * caller must use an exact name.
+   */
+  const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normIndex = new Map<string, NormalizedTool | null>();
+  const registerNorm = (key: string, t: NormalizedTool) => {
+    const k = normKey(key);
+    if (!k) return;
+    const seen = normIndex.get(k);
+    // null marks "ambiguous"; never resolve a key that could mean two tools.
+    if (seen === undefined) normIndex.set(k, t);
+    else if (seen && seen.name !== t.name) normIndex.set(k, null);
+  };
+
+  /** Exact map key first, then the separator-insensitive fallback. */
+  const lookupMapKey = (raw: unknown): NormalizedTool | undefined => {
+    const key = String(raw ?? "");
+    const exact = codeToTool.get(key);
+    if (exact) return exact;
+    return normIndex.get(normKey(key)) ?? undefined;
+  };
+
+  if (level === 3) {
+    // Real names and every map key both get an entry, so `gdrive.sheets_append_rows`,
+    // `gdrive:sheets_append_rows` and `gdrivesheetsappendrows` all reach the same tool.
+    for (const t of tools) registerNorm(t.name, t);
+    for (const [code, t] of codeToTool) registerNorm(code, t);
   }
 
   const finish = (
@@ -416,7 +462,7 @@ export function compress(
       const args = asObject(rawArgs);
       if (name === "q") {
         if (args.c !== undefined) {
-          const t = codeToTool.get(String(args.c));
+          const t = lookupMapKey(args.c);
           if (!t) return err(`No map code "${args.c}". Search with q(s=…).`);
           return {
             kind: "meta",
@@ -443,13 +489,19 @@ export function compress(
       // claude-opus-5: name="b5", args={f:"b5", a:"{…}"}. Codes are unique and
       // cannot collide with `t` or `q`, so this form is unambiguous and
       // accepting it removes a whole class of wasted turn.
-      const viaCode = name !== "t" && name !== "q" ? codeToTool.get(name) : undefined;
+      const viaCode = name !== "t" && name !== "q" ? lookupMapKey(name) : undefined;
       if (!viaCode && name !== "t") {
         return err(`No tool named "${name}". Invoke tools with t(f=<code>).`);
       }
 
-      const t = viaCode ?? codeToTool.get(String(args.f));
-      if (!t) return err(`No map code "${args.f}". Search with q(s=…).`);
+      const t = viaCode ?? lookupMapKey(args.f);
+      if (!t) {
+        const guess = nearest(String(args.f ?? ""), [...codeToTool.keys()]);
+        return err(
+          `No map code "${args.f}". Search with q(s=…).` +
+            (guess ? ` Did you mean "${guess}"? Use it exactly as written in <toolmap>.` : ""),
+        );
+      }
 
       // Args may arrive nested under `a`, or flat alongside `f`. Prefer `a`
       // when present rather than merging, so there is one source of truth.

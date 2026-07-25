@@ -229,3 +229,72 @@ describe("namespaceOf contract is enforced", () => {
     expect(k.resolve("t", { f: "slack_post_message", a: { channel: "#a", text: "b" } }).kind).toBe("call");
   });
 });
+
+describe("observed on gpt-5.6-sol: namespace joined with a dot, not an underscore", () => {
+  /**
+   * Every failure of the `grouped` arm on gpt-5.6-sol in the 432-run real-tool
+   * sweep was this, and nothing else. The map prints `gdrive: sheets_append_rows`
+   * and the model reassembled the name with a DOT — the ordinary convention for
+   * qualified identifiers — where the real tool uses an underscore. Verified not
+   * to be rate limiting: zero of 369 runs recorded an API error.
+   *
+   * Actual identifiers sent, from bench/results/multi-openai-*.jsonl:
+   *   gdrive.sheets_append_rows   coding.task_result   reverse.geocode
+   *   scorecard.lf_daily          get.label_data       order.path_financial
+   *
+   * Rejecting these cost six turns per task and more money than the smaller map
+   * saved. The model's guess was reasonable; our lookup was too strict.
+   */
+  const c = () => compress(TOOLS, { level: 3, mapStyle: "grouped" });
+
+  for (const sep of [".", ":", "/", "-", " ", ""]) {
+    it(`accepts namespace${JSON.stringify(sep)}op`, () => {
+      const r = c().resolve("t", {
+        f: `github${sep}create_issue`,
+        a: { owner: "acme", repo: "web", title: "x" },
+      });
+      expect(r.kind, `separator ${JSON.stringify(sep)}`).toBe("call");
+      if (r.kind === "call") expect(r.name).toBe("github_create_issue");
+    });
+  }
+
+  it("accepts a dotted name through q() as well as t()", () => {
+    const r = c().resolve("q", { c: "github.create_issue" });
+    expect(r.kind).toBe("meta");
+  });
+
+  it("is case-insensitive about it", () => {
+    const r = c().resolve("t", {
+      f: "GitHub.Create_Issue",
+      a: { owner: "a", repo: "b", title: "c" },
+    });
+    expect(r.kind).toBe("call");
+  });
+
+  it("still rejects a genuinely unknown name, and names the near miss", () => {
+    const r = c().resolve("t", { f: "github.delete_everything", a: {} });
+    expect(r.kind).toBe("error");
+    if (r.kind === "error") expect(r.message).toMatch(/No map code|Did you mean/);
+  });
+
+  it("refuses to guess when two tools normalise identically", () => {
+    // a_b and a.b both normalise to "ab": ambiguous, so neither is aliased.
+    const clash = [
+      { name: "a_b", description: "x", inputSchema: { type: "object", properties: {} } },
+      { name: "a.b", description: "y", inputSchema: { type: "object", properties: {} } },
+    ];
+    const k = compress(clash as any, { level: 3, mapStyle: "nocode" });
+    expect(k.resolve("t", { f: "ab", a: {} }).kind).toBe("error");
+    // The exact names still work.
+    expect(k.resolve("t", { f: "a_b", a: {} }).kind).toBe("call");
+  });
+
+  it("applies to the shipped default too, not just codeless styles", () => {
+    const k = compress(TOOLS, { level: 3 });
+    const r = k.resolve("t", {
+      f: "github.create_issue",
+      a: { owner: "a", repo: "b", title: "c" },
+    });
+    expect(r.kind).toBe("call");
+  });
+});
