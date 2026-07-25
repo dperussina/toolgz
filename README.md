@@ -156,6 +156,7 @@ trip. A test asserts that file matches the code, so it cannot drift.
 | **[Complete guide](docs/GUIDE.md)** | Install → working agent loop. Per-provider setup for all four, prompt caching, MCP aggregation, troubleshooting. Start here. |
 | **[Before / after](docs/BEFORE-AFTER.md)** | Generated, not illustrated. Both artifacts toolgz modifies, at every level. |
 | **[Full results](docs/RESULTS.md)** | Every number, the methodology, and what it does **not** establish. |
+| **[Announcement drafts](docs/ANNOUNCEMENT.md)** | Ready-to-post write-ups, plus a list of claims *not* to make. |
 
 ## Providers
 
