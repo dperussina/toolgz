@@ -20,6 +20,23 @@ specific workflow. You need to configure it explicitly.
 
 That is all. No secret required.
 
+### Current state of this repo
+
+Already done:
+
+- [x] `NPM_TOKEN` repository secret set
+- [x] `npm-publish` environment created
+- [ ] Trusted Publisher configured on npmjs.com — optional, and it lets you
+      delete the token afterwards
+
+So the workflow can publish today via the token. Configuring the Trusted
+Publisher later is a strict upgrade: no long-lived credential to rotate.
+
+> **`NPM_TOKEN` belongs in GitHub secrets, not in `.env`.** Nothing in this repo
+> reads it from the environment — `.env` is only for benchmark provider keys. A
+> publish credential sitting in a file that every bench script loads is
+> avoidable exposure.
+
 ### The first publish
 
 Trusted publishing is configured on a package that already exists, so the very
