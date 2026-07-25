@@ -188,10 +188,32 @@ export const minifiedSig = fromLibrary(
   { level: 3, mapStyle: "signature" },
 );
 
+/**
+ * Codeless candidates. The shipped map writes a code AND the real name, paying
+ * for identity twice; on 149 real MCP tools that duplication measured 18-22% of
+ * the level-3 token cost. Dropping the code also removes an observed failure mode
+ * (a model calling the map code as the tool name).
+ *
+ * Included here so the size win is judged against accuracy rather than on its own.
+ */
+export const minifiedNocode = fromLibrary(
+  "minified-nocode",
+  "Arm A⁗ · no codes, name + required args",
+  { level: 3, mapStyle: "nocode" },
+);
+
+export const minifiedGrouped = fromLibrary(
+  "minified-grouped",
+  "Arm A⁵ · namespace-grouped, no codes",
+  { level: 3, mapStyle: "grouped" },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
   minifiedTerse,
   minifiedPlus,
   minifiedSig,
+  minifiedNocode,
+  minifiedGrouped,
 ];
 
 /** Maps each library-backed arm to the configuration it must equal. */
@@ -204,4 +226,6 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedTerse, opts: { level: 3, mapStyle: "terse" } },
   { arm: minifiedPlus, opts: { level: 3, mapStyle: "name+required" } },
   { arm: minifiedSig, opts: { level: 3, mapStyle: "signature" } },
+  { arm: minifiedNocode, opts: { level: 3, mapStyle: "nocode" } },
+  { arm: minifiedGrouped, opts: { level: 3, mapStyle: "grouped" } },
 ];

@@ -75,11 +75,15 @@ describe("arm registry hygiene", () => {
 });
 
 describe("library-backed arms round-trip through the library resolver", () => {
-  for (const { arm } of LIBRARY_ARM_MAP) {
+  for (const { arm, opts } of LIBRARY_ARM_MAP) {
     it(`${arm.id} resolves a real call back to the real tool`, () => {
       const tools = subset(60);
       const target = tools.find((t) => t.name === "github_create_pull_request")!;
-      const c = compress(tools as any, { level: 3, mapStyle: "name" });
+      // Compress with the ARM'S OWN configuration. Using a fixed mapStyle here
+      // silently assumed every level-3 arm shares one code space, which stopped
+      // being true once codeless styles existed: they key the map on the real
+      // name, so a hard-coded `mapStyle: "name"` sent them a code like "b4".
+      const c = compress(tools as any, opts as any);
       // Encode via the library for level 3; for other levels the model would
       // emit the tool name directly.
       const raw =
