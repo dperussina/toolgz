@@ -22,34 +22,76 @@ That is all. No secret required.
 
 ### Current state of this repo
 
-Already done:
-
-- [x] `NPM_TOKEN` repository secret set
 - [x] `npm-publish` environment created
-- [ ] Trusted Publisher configured on npmjs.com — optional, and it lets you
-      delete the token afterwards
-
-So the workflow can publish today via the token. Configuring the Trusted
-Publisher later is a strict upgrade: no long-lived credential to rotate.
+- [x] `NPM_TOKEN` repository secret set
+- [x] Workflow validated end to end via `dry_run` (npm 12.0.1 / Node 22.23.1 in CI)
+- [ ] **A token type that works unattended** — see below; the current one does not
+- [ ] Trusted Publisher configured on npmjs.com
 
 > **`NPM_TOKEN` belongs in GitHub secrets, not in `.env`.** Nothing in this repo
 > reads it from the environment — `.env` is only for benchmark provider keys. A
 > publish credential sitting in a file that every bench script loads is
 > avoidable exposure.
 
+### Not every npm token can publish from CI
+
+Observed on the first `v0.1.0` release attempt
+([run 30173955410](https://github.com/dperussina/toolgz/actions/runs/30173955410)):
+
+```
+npm notice publish Signed provenance statement with source and build information
+npm error code EOTP
+npm error This operation requires a one-time password.
+```
+
+The token authenticated correctly. It failed because it **honours 2FA**, and a
+GitHub runner has no way to supply a one-time password. Token type is what
+decides this:
+
+| Token | Unattended publish with 2FA on |
+|---|---|
+| Classic → **Read-only** | no (cannot publish) |
+| Classic → **Publish** | ❌ prompts for an OTP → `EOTP` |
+| Classic → **Automation** | ✅ bypasses 2FA — the CI-intended type |
+| **Granular access** | ✅ when granted Read *and write* on the package |
+| **Trusted publishing (OIDC)** | ✅ no token at all |
+
+A classic token is `npm_` + 36 characters (40 total); granular tokens are longer.
+So a 40-character token that hits `EOTP` is a classic **Publish** token, and the
+fix is to reissue it as **Automation** — not to change the workflow.
+
+Note that npm is actively restricting 2FA-bypassing tokens (the run log warns
+about it), so treat any token as a stepping stone to trusted publishing.
+
 ### The first publish
 
-Trusted publishing is configured on a package that already exists, so the very
-first release of a brand-new name generally needs a token:
+Trusted publishing is configured under a package's own settings, so it cannot be
+set up for a name that does not exist yet. The first release therefore needs a
+token — after which the token can be deleted permanently:
 
-1. Create a **granular access token** on npmjs.com scoped to publish `toolgz`.
-2. Add it as the repo secret `NPM_TOKEN`.
-3. Cut the first release (below). The workflow uses the token when present.
+1. npmjs.com → **Access Tokens → Generate New Token → Classic → Automation**
+   (or a **Granular** token with *Read and write* on `toolgz`).
+2. Replace the repo secret: `gh secret set NPM_TOKEN --repo dperussina/toolgz`.
+3. Re-run the publish for the existing release — no new tag or release needed:
+   `gh run rerun <run-id> --repo dperussina/toolgz`.
 4. Configure the Trusted Publisher as above, then **delete the `NPM_TOKEN`
-   secret** — subsequent releases authenticate over OIDC.
+   secret**. Every later release authenticates over OIDC.
 
-Alternatively publish `0.1.0` once from your machine (`npm publish`), then
-configure the Trusted Publisher and never use a token in CI at all.
+Publishing from a laptop instead (`npm publish`, entering the OTP interactively)
+also works, but that build gets **no provenance attestation** — provenance
+requires the OIDC token that only CI has. Doing the first publish through CI is
+what keeps every published version attested.
+
+#### A failed publish does not burn the version
+
+`npm publish` is atomic: the `EOTP` failure above left `toolgz@0.1.0` unpublished
+and reusable, so the fix is a re-run rather than a version bump. Verify with
+`npm view toolgz version` before assuming otherwise.
+
+One harmless artifact: provenance is signed *before* the registry call, so a
+Sigstore transparency-log entry exists for a version that was never published. It
+is an append-only public log of a build that really did happen; nothing needs
+cleaning up.
 
 ## Cutting a release
 
