@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#1a1a19"/>
+  <rect x="0" y="0" width="1200" height="4" fill="#1baf7a"/>
+
+  <text x="56" y="80" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="27" font-weight="700" fill="#ffffff">toolgz</text>
+
+  <rect x="912" y="57" width="232" height="34" rx="17" fill="none" stroke="#1baf7a" stroke-width="1.5"/>
+  <text x="1028" y="79" text-anchor="middle" font-family="SF Mono, Menlo, DejaVu Sans Mono, monospace" font-size="15" fill="#1baf7a">npm install toolgz</text>
+
+  <text x="56" y="152" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="38" font-weight="700" fill="#ffffff">Your agent burns 30,000 tokens on tool</text>
+  <text x="56" y="196" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="38" font-weight="700" fill="#ffffff">definitions before the user says a word.</text>
+
+  <text x="56" y="234" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" fill="#c3c2b7">toolgz gives back <tspan fill="#1baf7a" font-weight="700">71–85%</tspan> of it — and runs faster. Your code still sees the same tool names and arguments.</text>
+
+  <line x1="56" y1="262" x2="1144" y2="262" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="56" y="283" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="11" letter-spacing="1.2" fill="#898781">PROMPT TOKENS PER REQUEST — UNCOMPRESSED → toolgz</text>
+  <text x="1144" y="283" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="11" letter-spacing="1.2" fill="#898781">SAVED / LATENCY</text>
+
+    <text x="56" y="307" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#ffffff">Anthropic</text>
+    <text x="56" y="326" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">30,817 → <tspan fill="#1baf7a" font-weight="700">4,628</tspan> tokens</text>
+
+    <rect x="372" y="300" width="560" height="20" rx="4" fill="#2c2c2a"/>
+    <rect x="456.09903624622774" y="300" width="2" height="20" fill="#1a1a19"/>
+    <rect x="372" y="300" width="84.09903624622773" height="20" rx="4" fill="#1baf7a"/>
+
+    <text x="1144" y="311" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−85%</text>
+    <text x="1144" y="329" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">15.0s → 12.1s</text>
+
+    <text x="56" y="369" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#ffffff">xAI</text>
+    <text x="56" y="388" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">17,522 → <tspan fill="#1baf7a" font-weight="700">2,663</tspan> tokens</text>
+
+    <rect x="372" y="362" width="318.40607456923124" height="20" rx="4" fill="#2c2c2a"/>
+    <rect x="420.3914722393484" y="362" width="2" height="20" fill="#1a1a19"/>
+    <rect x="372" y="362" width="48.39147223934841" height="20" rx="4" fill="#1baf7a"/>
+
+    <text x="1144" y="373" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−85%</text>
+    <text x="1144" y="391" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">6.1s → 4.6s</text>
+
+    <text x="56" y="431" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#ffffff">Google</text>
+    <text x="56" y="450" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">10,948 → <tspan fill="#1baf7a" font-weight="700">2,302</tspan> tokens</text>
+
+    <rect x="372" y="424" width="198.94473829379888" height="20" rx="4" fill="#2c2c2a"/>
+    <rect x="413.8314566635299" y="424" width="2" height="20" fill="#1a1a19"/>
+    <rect x="372" y="424" width="41.83145666352987" height="20" rx="4" fill="#1baf7a"/>
+
+    <text x="1144" y="435" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−79%</text>
+    <text x="1144" y="453" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">5.6s → 5.5s</text>
+
+    <text x="56" y="493" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#ffffff">OpenAI</text>
+    <text x="56" y="512" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">7,694 → <tspan fill="#1baf7a" font-weight="700">2,196</tspan> tokens</text>
+
+    <rect x="372" y="486" width="139.81373916993869" height="20" rx="4" fill="#2c2c2a"/>
+    <rect x="411.90524710387126" y="486" width="2" height="20" fill="#1a1a19"/>
+    <rect x="372" y="486" width="39.90524710387124" height="20" rx="4" fill="#1baf7a"/>
+
+    <text x="1144" y="497" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−71%</text>
+    <text x="1144" y="515" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">6.8s → 5.6s</text>
+
+  <line x1="56" y1="558" x2="1144" y2="558" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="56" y="583" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#ffffff">60/60 tasks completed · 0 hallucinated tool names · 0 malformed arguments</text>
+  <text x="56" y="603" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">claude-opus-5 · grok-4.5 · gemini-3.1-pro-preview · gpt-5.6-sol · reasoning at high effort</text>
+  <text x="1144" y="583" text-anchor="end" font-family="SF Mono, Menlo, DejaVu Sans Mono, monospace" font-size="13" fill="#c3c2b7">github.com/dperussina/toolgz</text>
+  <text x="1144" y="603" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">Apache-2.0 · zero runtime dependencies</text>
+</svg>
