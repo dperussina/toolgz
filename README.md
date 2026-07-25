@@ -47,7 +47,8 @@ description, inputSchema }`. Both `inputSchema` and `input_schema` are accepted.
 ## Measured results
 
 Claude Opus 5, `effort: "high"`, **150 runs** across 10 scenarios, $7.72.
-Raw data in `bench/results/`. Reproduce with `npm run bench`.
+Raw data is committed in `bench/results/`; recompute it yourself with
+`npx tsx bench/analyze.ts`. Reproduce with `npm run bench`.
 
 | Strategy | Tool block | Avg prompt | Turns | Malformed args | Latency | Cost |
 |---|---:|---:|---:|---:|---:|---:|
@@ -60,6 +61,15 @@ Raw data in `bench/results/`. Reproduce with `npm run bench`.
 Every arm completed every task — 48/48 tool calls correct, zero hallucinated
 names anywhere. See [docs/RESULTS.md](docs/RESULTS.md) for the per-scenario
 breakdown, the accuracy probe, and what these numbers do **not** establish.
+
+**Re-run on two cheaper models** (100 more runs, $0.31): L3 held at 40/40
+correct across Opus 5, Sonnet 5 and Haiku 4.5. What degrades on weaker models is
+argument *formatting* — malformed args went 0 → 3 → 6, every one caught by
+validation and retried — not tool *choice*.
+
+In the same sweep, Anthropic's native tool search completed **2 of 10** tasks on
+Haiku 4.5, answering with no tool call at all on four of five scenarios. See
+[Composing with native tool search](#composing-with-anthropics-native-tool-search).
 
 Four things worth pulling out:
 
@@ -217,12 +227,30 @@ const tools = [
 Two API constraints: at least one tool must stay non-deferred, and
 `cache_control` cannot go on a deferred tool. `forAnthropic()` handles the second.
 
+**One caveat, measured:** `defer_loading` hides tools until the model *elects to
+search*. On Claude Opus 5 it elects reliably (20/20 tasks). On Haiku 4.5 it
+often does not — 2/10 tasks, with four of five scenarios answered in a single
+turn and zero tool calls, at ~1,780 prompt tokens. No error is raised; the
+request succeeds and the answer is simply unaided.
+
+A dispatcher does not share this failure mode, for a structural reason: `t` and
+`q` are ordinary always-visible tools, so the model cannot forget to search —
+searching is the only thing on offer. Deferred loading makes discovery
+*optional*; a dispatcher makes it *the entry point*.
+
+Rule of thumb: compose with native search on frontier models; prefer level 3
+alone below that tier.
+
 ---
 
 ## What this library does not do
 
 - It does not beat native tool search on tool-block size on Anthropic. It
-  composes with it, and it works on providers that have no equivalent.
+  composes with it, works on providers that have no equivalent, and — measured
+  on Haiku 4.5 — is markedly more reliable below the frontier tier.
+- It has not been measured on a non-Claude model. The design is provider-neutral
+  and adapters exist for OpenAI and Gemini, but the model-agnostic claim rests
+  on that design, not on data.
 - It does not reduce your bill just because it reduces tokens. Cached tool
   blocks already read at ~0.1×; the win this library targets is **context-window
   occupancy**.

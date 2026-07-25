@@ -22,6 +22,13 @@ export type Recommendation = {
  *    calls, zero hallucinated names. It was also the fastest and cheapest arm.
  *    The real cost is turns (+0.6) and lookup round-trips (~1.7/run), so it is
  *    recommended by size, not withheld by superstition.
+ *
+ *    Re-tested on Sonnet 5 and Haiku 4.5: 40/40 correct, still zero
+ *    hallucinated codes. What degrades on weaker models is argument
+ *    *formatting* (malformed args 0 → 3 → 6), not tool *choice* — and every
+ *    one was caught by `validate` and recovered. That is precisely why
+ *    validation defaults to on; disabling it converts a recovered retry into a
+ *    bad dispatch.
  *  - **Level 2 is dominated.** More tokens, six times the malformed arguments,
  *    slower and dearer than level 3. It is never recommended. It stays in the
  *    API for callers who need real operation names on the wire.
@@ -60,6 +67,6 @@ export function recommendLevel(
   return {
     ...base,
     level: 3,
-    reason: `${toolCount} tools across ${namespaceCount} namespaces (${opsPerNamespace.toFixed(1)} ops each) — deep enough that a single dispatcher plus a cached code map beats per-tool definitions. Measured at ~82% fewer prompt tokens with no accuracy penalty, at the cost of roughly 0.6 extra turns and 1.7 lookup calls per task. If your workload is latency-critical rather than context-critical, drop to level 1.`,
+    reason: `${toolCount} tools across ${namespaceCount} namespaces (${opsPerNamespace.toFixed(1)} ops each) — deep enough that a single dispatcher plus a cached code map beats per-tool definitions. Measured at ~82% fewer prompt tokens with no accuracy penalty across Opus 5, Sonnet 5 and Haiku 4.5, at the cost of roughly 0.6 extra turns and 1.7 lookup calls per task. Keep argument validation on — on weaker models malformed arguments rise and validation is what catches them. If your workload is latency-critical rather than context-critical, drop to level 1.`,
   };
 }
