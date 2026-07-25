@@ -56,7 +56,27 @@ export type Level = 0 | 1 | 2 | 3;
  * every turn pays for a fresh round of reasoning. `terse` drops the real name
  * entirely; it is the most aggressive and the least legible.
  */
-export type MapStyle = "name" | "name+required" | "signature" | "terse";
+/**
+ * How each line of the level-3 `<toolmap>` is rendered.
+ *
+ * `nocode` and `grouped` are experimental. They drop the two-character code
+ * column, because the map already carries the tool's real name and so pays for
+ * identity twice; measured on real MCP tools that duplication is ~19% of the
+ * map's tokens. With no code, the tool's own name *is* its map key, which also
+ * removes a failure mode we have observed in the wild (a model calling the code
+ * as the tool name — see tests/robustness.test.ts).
+ *
+ * Neither is the default yet: bare `name` was also smaller than the default and
+ * failed deterministically on grok-4.5, so a size win stays a hypothesis until
+ * the cross-provider accuracy sweep confirms it.
+ */
+export type MapStyle =
+  | "name"
+  | "name+required"
+  | "signature"
+  | "terse"
+  | "nocode"
+  | "grouped";
 
 export type CompressOptions = {
   level?: Level;

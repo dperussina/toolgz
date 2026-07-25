@@ -38,7 +38,21 @@ export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
 const LEVELS: Level[] = [0, 1, 2, 3];
-const MAP_STYLES: MapStyle[] = ["name", "name+required", "signature", "terse"];
+const MAP_STYLES: MapStyle[] = [
+  "name",
+  "name+required",
+  "signature",
+  "terse",
+  "nocode",
+  "grouped",
+];
+
+/**
+ * Styles with no code column. For these the tool's real name is its map key, so
+ * `t`, `q`, `resolve` and `codeFor` keep working unchanged — the only difference
+ * is what gets written into the map and what the model passes to `f`.
+ */
+const CODELESS: MapStyle[] = ["nocode", "grouped"];
 
 const err = (message: string, recoverable = true): Resolution => ({
   kind: "error",
@@ -108,7 +122,25 @@ export function compress(
   // -- level 3 code assignment ----------------------------------------------
   const codeToTool = new Map<string, NormalizedTool>();
   const toolToCode = new Map<string, string>();
-  if (level === 3) {
+  const codeless = CODELESS.includes(mapStyle);
+  if (level === 3 && codeless) {
+    // The name is the key. Nothing downstream needs to know the difference.
+    for (const t of tools) {
+      codeToTool.set(t.name, t);
+      toolToCode.set(t.name, t.name);
+    }
+    if (mapStyle === "grouped") {
+      // `grouped` prints `ns: op(args)`, so a model reading the map sees the bare
+      // op rather than the full name. Alias it — but only where it is globally
+      // unambiguous, since two namespaces can both expose e.g. `list`. Ambiguous
+      // ops are simply not aliased, and the legend states the naming rule.
+      const opCounts = new Map<string, number>();
+      for (const t of tools) opCounts.set(t.op, (opCounts.get(t.op) ?? 0) + 1);
+      for (const t of tools) {
+        if (opCounts.get(t.op) === 1 && !codeToTool.has(t.op)) codeToTool.set(t.op, t);
+      }
+    }
+  } else if (level === 3) {
     let ni = 0;
     for (const [, list] of groups) {
       // Two chars past 26 namespaces so codes stay unique and short.
@@ -302,14 +334,43 @@ export function compress(
       const req = t.schema.required ?? [];
       return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
     }
+    // `nocode`: the code already *is* the name, so emitting both would restore
+    // the duplication this style exists to remove.
+    if (mapStyle === "nocode") {
+      const req = t.schema.required ?? [];
+      return req.length ? `${t.name} ${req.join(",")}` : t.name;
+    }
     return `${code} ${t.name}`;
   };
-  const lines = [...codeToTool.entries()].map(([code, t]) => renderLine(code, t));
+
+  // `grouped` factors the shared namespace prefix out of every line: real MCP
+  // names repeat it on each tool (google_maps_*), and at 100 tools that repetition
+  // measured ~22% of the map's tokens.
+  const groupedLines = (): string[] =>
+    [...groups].map(([ns, list]) => {
+      const ops = list
+        .map((t) => {
+          const req = t.schema.required ?? [];
+          return req.length ? `${t.op}(${req.join(",")})` : `${t.op}()`;
+        })
+        .join(" ");
+      return `${ns}: ${ops}`;
+    });
+
+  const lines =
+    mapStyle === "grouped"
+      ? groupedLines()
+      : // Codeless styles alias extra keys into codeToTool, so iterate the tools
+        // themselves to avoid emitting a line per alias.
+        codeless
+        ? tools.map((t) => renderLine(t.name, t))
+        : [...codeToTool.entries()].map(([code, t]) => renderLine(code, t));
   const wire = [
     {
       name: "t",
-      description:
-        "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
+      description: codeless
+        ? "Invoke a tool by its name. Names are listed in <toolmap> in the system prompt."
+        : "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
       input_schema: {
         type: "object",
         properties: {
@@ -321,8 +382,9 @@ export function compress(
     },
     {
       name: "q",
-      description:
-        "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
+      description: codeless
+        ? "Expand a tool name to its full description and parameter signature (c), or search the map by keyword (s)."
+        : "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
       input_schema: {
         type: "object",
         properties: { c: { type: "string" }, s: { type: "string" } },
@@ -334,8 +396,17 @@ export function compress(
       ? "Each line is: code name required-args. "
       : mapStyle === "signature"
         ? "Each line is: code name(args), where ? marks optional. "
-        : "";
-  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.`;
+        : mapStyle === "nocode"
+          ? "Each line is: name required-args. "
+          : mapStyle === "grouped"
+            ? "Lines are grouped by namespace: `namespace: op(required-args) …`. A tool's full name is namespace_op. "
+            : "";
+  // Codeless styles must tell the model to pass the name, not a code, or it will
+  // hunt for a code column that is not there.
+  const invokeHint = codeless
+    ? "Invoke with t(f=<name>, a={…}). Use q to expand a name before calling if you are unsure of its parameters."
+    : "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
+  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 
   return finish(
     wire,
