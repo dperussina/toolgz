@@ -105,6 +105,13 @@ export const minified = fromLibrary(
   { level: 3, mapStyle: "name" },
 );
 
+/** The shipped level-3 default, so the sweep always covers what users get. */
+export const minifiedDefault = fromLibrary(
+  "minified-default",
+  "Arm A (default) · level 3 as shipped",
+  { level: 3 },
+);
+
 // ── arm-A variants, also library configurations ─────────────────────────────
 
 /**
@@ -182,6 +189,7 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: signatures, opts: { level: 1 } },
   { arm: hybrid, opts: { level: 2 } },
   { arm: minified, opts: { level: 3, mapStyle: "name" } },
+  { arm: minifiedDefault, opts: { level: 3 } },
   { arm: minifiedTerse, opts: { level: 3, mapStyle: "terse" } },
   { arm: minifiedPlus, opts: { level: 3, mapStyle: "name+required" } },
 ];

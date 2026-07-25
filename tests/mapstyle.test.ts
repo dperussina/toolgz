@@ -46,16 +46,25 @@ const mapOf = (preamble: string) => {
 };
 
 describe("level 3 mapStyle", () => {
-  it("defaults to bare names", () => {
+  // The default was "name" until the cross-provider sweep: grok-4.5 answered
+  // one scenario with zero tool calls on 3/3 reps under bare names, and
+  // "name+required" fixed it 3/3 while also being perfect on the other three
+  // providers. Measurement changed the default; see docs/RESULTS.md.
+  it("defaults to name+required", () => {
     const m = mapOf(compress(TOOLS, { level: 3 }).systemPreamble);
-    expect(m).toContain("github_create_issue");
-    expect(m).not.toContain("owner,repo,title");
+    expect(m).toContain("github_create_issue owner,repo,title");
   });
 
-  it("`name` is explicit and identical to the default", () => {
-    expect(compress(TOOLS, { level: 3, mapStyle: "name" }).systemPreamble).toBe(
-      compress(TOOLS, { level: 3 }).systemPreamble,
-    );
+  it("`name+required` is explicit and identical to the default", () => {
+    expect(
+      compress(TOOLS, { level: 3, mapStyle: "name+required" }).systemPreamble,
+    ).toBe(compress(TOOLS, { level: 3 }).systemPreamble);
+  });
+
+  it("`name` is still available for callers who want the smallest map", () => {
+    const m = mapOf(compress(TOOLS, { level: 3, mapStyle: "name" }).systemPreamble);
+    expect(m).toContain("github_create_issue");
+    expect(m).not.toContain("owner,repo,title");
   });
 
   it("`name+required` appends only the required parameters", () => {
@@ -85,7 +94,7 @@ describe("level 3 mapStyle", () => {
   it("is ignored below level 3 (no preamble to carry it)", () => {
     for (const level of [0, 1, 2] as const) {
       expect(
-        compress(TOOLS, { level, mapStyle: "name+required" }).systemPreamble,
+        compress(TOOLS, { level, mapStyle: "name" }).systemPreamble,
       ).toBe(compress(TOOLS, { level }).systemPreamble);
     }
   });

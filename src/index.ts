@@ -73,7 +73,16 @@ export function compress(
     throw new Error(`unsupported level: ${level} (expected 0, 1, 2 or 3)`);
   }
 
-  const mapStyle = options.mapStyle ?? "name";
+  // Default is "name+required", chosen on measurement rather than taste.
+  //
+  // With bare names, grok-4.5 answered acc-cross-product with ZERO tool calls
+  // on 3/3 reps — a silent failure, no error, just an unaided answer. Adding
+  // the required parameter names fixed it 3/3, and across all four providers
+  // (360 runs) "name+required" was the only level-3 style perfect everywhere:
+  // 60/60 tasks, fewer malformed arguments, fewer lookup round-trips, and
+  // faster wall-clock than uncompressed on every provider. The larger map pays
+  // for itself by removing a discovery turn.
+  const mapStyle = options.mapStyle ?? "name+required";
   if (!MAP_STYLES.includes(mapStyle)) {
     throw new Error(
       `unsupported mapStyle: ${mapStyle} (expected ${MAP_STYLES.join(", ")})`,

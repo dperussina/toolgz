@@ -130,6 +130,8 @@ const ARM_LABEL: Record<string, string> = {
   minified: "L3 minified",
   "minified-plus": "L3 + req args",
   "minified-terse": "L3 terse",
+  "minified-default": "L3 (default)",
+  native: "native search",
 };
 const ARM_ORDER = [
   "control",
@@ -138,6 +140,7 @@ const ARM_ORDER = [
   "minified-terse",
   "minified",
   "minified-plus",
+  "minified-default",
 ];
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
