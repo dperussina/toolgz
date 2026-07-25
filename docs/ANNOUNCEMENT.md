@@ -12,13 +12,37 @@ Social image: `docs/img/social-card-dark.png` / `-light.png`
 
 ## Hacker News — "Show HN"
 
-**Title** (80 char limit; the number and the honesty both need to fit):
+**Paste-ready body:** [`ANNOUNCEMENT-hackernews.txt`](ANNOUNCEMENT-hackernews.txt)
+— plain text, verified against HN's formatting rules. The markdown below is the
+source of record for editing; do not paste it.
 
-> Show HN: toolgz – cut LLM tool-definition tokens ~80% without hurting accuracy
+HN's formatter is not markdown either. It supports only:
+
+| Thing | Behaviour |
+|---|---|
+| Blank line | paragraph break — the only layout tool |
+| `*text*` | *italic*. An unpaired asterisk italicises everything after it |
+| 2-space indent | monospace block that **does not wrap** — keep lines < 70 chars |
+| Bold, headings, tables, real lists | unsupported; render literally |
+| URLs | auto-linked |
+
+**Title** — hard 80-character limit, and HN truncates silently past it. All of
+these fit (length in brackets):
+
+> Show HN: toolgz – cut LLM tool-definition tokens ~80% without hurting accuracy [78]
 
 Alternates:
-> Show HN: I compressed my agent's tool definitions by 80% and was wrong about why it worked
-> Show HN: toolgz – 720 benchmark runs on whether compressing tool schemas breaks tool use
+> Show HN: I compressed my agent's tool schemas 80% and was wrong about why [73]
+> Show HN: toolgz – 420 runs on whether compressing tool schemas breaks tool use [78]
+
+**How to submit:** Show HN takes a URL *and* text. Put
+`https://github.com/dperussina/toolgz` in the url field and the body in the text
+field — that way the title links to the repo and your description still appears.
+Do not post the body as a separate comment; Show HN posts support both fields.
+
+Register for HN: the engineering narrative is the value here, including the parts
+that did not work. An unhedged claim gets dismantled in the first comment, so the
+failures and the cost caveat stay in.
 
 **Body:**
 
