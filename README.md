@@ -1,4 +1,4 @@
-# tool-compression
+# toolgz
 
 Shrink LLM tool definitions without making the model dumber.
 
@@ -9,7 +9,7 @@ and translates the model's calls back, so nothing downstream changes.
 Model-agnostic, provider-agnostic, zero runtime dependencies, no network calls.
 
 ```bash
-npm install tool-compression
+npm install toolgz
 ```
 
 ---
@@ -17,7 +17,7 @@ npm install tool-compression
 ## Quick start
 
 ```ts
-import { compress, forAnthropic } from "tool-compression";
+import { compress, forAnthropic } from "toolgz";
 
 const c = compress(myTools);                    // level 1 by default
 const { tools, system } = forAnthropic(c);      // adds the cache breakpoint
@@ -170,7 +170,7 @@ did not appear.
 ## Picking a level
 
 ```ts
-import { recommendLevel } from "tool-compression";
+import { recommendLevel } from "toolgz";
 
 const { level, reason } = recommendLevel(myTools);
 console.log(level, reason);
@@ -197,7 +197,7 @@ knowing, both measured:
 ## Providers
 
 ```ts
-import { forAnthropic, forOpenAI, forGemini } from "tool-compression";
+import { forAnthropic, forOpenAI, forGemini } from "toolgz";
 ```
 
 | Adapter | Handles |

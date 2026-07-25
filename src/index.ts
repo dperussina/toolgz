@@ -1,7 +1,7 @@
 /**
- * tool-compression — shrink LLM tool definitions without making the model dumber.
+ * toolgz — shrink LLM tool definitions without making the model dumber.
  *
- *   import { compress } from "tool-compression";
+ *   import { compress } from "toolgz";
  *
  *   const c = compress(myTools, { level: 1 });
  *   const res = await client.messages.create({ ...,

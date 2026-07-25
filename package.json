@@ -1,7 +1,7 @@
 {
-  "name": "tool-compression",
+  "name": "toolgz",
   "version": "0.1.0",
-  "description": "Shrink LLM tool definitions without making the model dumber. Measured 82% fewer prompt tokens at equal accuracy.",
+  "description": "Compress LLM tool definitions to reclaim context window. Measured across Anthropic, OpenAI, Google and xAI.",
   "main": "dist/index.js",
   "scripts": {
     "test": "vitest run --exclude '**/integration/**'",
@@ -15,11 +15,15 @@
     "llm",
     "mcp",
     "tools",
+    "tool-calling",
+    "context-window",
+    "tokens",
     "anthropic",
     "claude",
     "openai",
-    "tokens",
-    "context-window"
+    "gemini",
+    "grok",
+    "prompt-caching"
   ],
   "author": "",
   "license": "MIT",
@@ -54,5 +58,13 @@
       "types": "./dist/providers/index.d.ts",
       "import": "./dist/providers/index.js"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dperussina/toolgz.git"
+  },
+  "homepage": "https://github.com/dperussina/toolgz#readme",
+  "bugs": {
+    "url": "https://github.com/dperussina/toolgz/issues"
   }
 }
