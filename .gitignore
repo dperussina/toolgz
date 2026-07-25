@@ -157,3 +157,8 @@ bench/results/*.log
 bench/dbg.ts
 bench/sizes.ts
 bench/rec-demo.ts
+
+# agent scratch files — never commit these
+_tmp_*
+_probe_*
+_*_probe_*

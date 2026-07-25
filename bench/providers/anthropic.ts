@@ -83,6 +83,8 @@ export const anthropicProvider: Provider = {
   // claude-opus-5: $5 / $25 per MTok.
   priceIn: 5.0 / 1_000_000,
   priceOut: 25.0 / 1_000_000,
+  // Anthropic cache reads bill at ~0.1x input.
+  priceCachedIn: 0.5 / 1_000_000,
 
   async chat(req: ChatRequest): Promise<ChatResult> {
     const resp: any = await client.messages.create({

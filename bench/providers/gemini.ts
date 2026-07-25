@@ -2,20 +2,47 @@
  * Google Gemini provider adapter for the benchmark harness.
  *
  * Translates the Anthropic-shaped `WireTool[]` / `ChatMessage[]` that every arm
- * emits into Gemini's `generateContent` wire format and normalises the response
- * back into `ChatResult`.
+ * emits into the Gemini **Interactions API** wire format and normalises the
+ * response back into `ChatResult`.
  *
- * SDK: `@google/genai` (v2.x). Credentials come from `GEMINI_API_KEY`.
+ * SDK: `@google/genai` (v2.13.0). Credentials come from `GEMINI_API_KEY`.
+ *
+ * ## Why the Interactions API and not `generateContent`
+ *
+ * `client.interactions.create()` is the current recommended surface;
+ * `client.models.generateContent()` is the previous-generation API. The
+ * differences that actually matter to this adapter:
+ *
+ *   - `generateContent` typed `FunctionDeclaration.parameters` as an OpenAPI
+ *     3.03 Schema *subset* with UPPERCASE type enums, and hard-rejected unknown
+ *     JSON Schema keywords. That forced a lossy sanitiser.
+ *   - The Interactions API types the tool as `{type:"function", name,
+ *     description, parameters}` where `parameters` is plain **JSON Schema**.
+ *     Verified against the live API on `gemini-3.1-pro-preview` (2026-07-25):
+ *     `additionalProperties`, `$schema`, `$id`, `$ref`+`$defs`, `$comment`,
+ *     `default`, `example`, `examples`, `const`, `oneOf`, `allOf`, `anyOf`,
+ *     `not`, `if`/`then`/`else`, `patternProperties`,
+ *     `unevaluatedProperties`, `additionalItems`, `prefixItems`, `contains`,
+ *     `dependentRequired`, `multipleOf`, `exclusiveMinimum`/`Maximum`,
+ *     `uniqueItems`, `readOnly`/`writeOnly`, `deprecated`, union types
+ *     (`["string","null"]`), and every `format` tried (`uri`, `email`, `uuid`,
+ *     `date-time`, `int32`) are ALL ACCEPTED. Lowercase and uppercase `type`
+ *     spellings both work.
+ *
+ * Pass-through matters here beyond correctness: this benchmark *measures the
+ * token cost of the tool block*. The old sanitiser stripped keywords the arms
+ * had deliberately emitted, so it was measuring a schema the arm never
+ * produced. We now send the arm's JSON Schema essentially verbatim.
+ *
+ * Only two schema shapes are rejected by the live API, and both are repaired
+ * below (see `prepareParameters`):
+ *   1. omitting `parameters` entirely -> 400 "schema at top-level must be a
+ *      boolean or an object" (it is required, even for zero-argument tools);
+ *   2. `required` naming a property absent from `properties` -> 400 "schema at
+ *      top-level requires unspecified property 'x'".
  */
 import "dotenv/config";
 import { GoogleGenAI } from "@google/genai";
-import type {
-  Content,
-  FunctionDeclaration,
-  GenerateContentResponse,
-  Part,
-  Schema,
-} from "@google/genai";
 
 import type {
   ChatMessage,
@@ -30,12 +57,42 @@ import type {
 /**
  * Google's current frontier / flagship model.
  *
- * Pro tier (deliberately not Flash or Flash-Lite), 1M-token context, supports
- * function calling. Selected from the model catalogue documented at
- * https://ai.google.dev/gemini-api/docs/models and priced on
- * https://ai.google.dev/gemini-api/docs/pricing.
+ * Pro tier (deliberately not Flash or Flash-Lite), 1M-token input context,
+ * supports function calling. Confirmed present on the live `models.list`
+ * endpoint 2026-07-25 with inputTokenLimit=1048576, outputTokenLimit=65536.
+ *
+ * Pro-tier candidates returned by the live catalogue, and why they lose:
+ *   models/gemini-3.1-pro-preview            <- SELECTED, current flagship Pro
+ *   models/gemini-3.1-pro-preview-customtools   variant, not the general model
+ *   models/gemini-3-pro-preview              superseded by 3.1
+ *   models/gemini-2.5-pro                    previous generation
+ *   models/gemini-pro-latest                 floating alias; a benchmark wants
+ *                                            a pinned id for reproducibility
+ *   models/gemini-3-pro-image[-preview]      image generation, 128k context
+ *   models/deep-research-pro-preview-12-2025 research agent, not a base model
+ *
+ * There is no `gemini-3.5-pro`: the 3.5 generation currently ships Flash only
+ * (`gemini-3.5-flash`), so 3.1 Pro remains the top Pro tier and is not
+ * superseded.
  */
 const MODEL = "gemini-3.1-pro-preview";
+
+/**
+ * Reasoning effort.
+ *
+ * The Anthropic arm runs at high reasoning effort, so we ask for parity. On
+ * `gemini-3.1-pro-preview` the legal `thinking_level` values are "low" |
+ * "medium" | "high" (there is no "minimal" on the Pro tier) and the documented
+ * default is already "high" — we set it explicitly so the benchmark does not
+ * silently change if Google moves the default.
+ *
+ * `thinking_summaries` is deliberately left off: summaries are billed output
+ * text that the harness would immediately discard.
+ */
+const THINKING_LEVEL = "high";
+
+/** Cheaper reasoning setting for the two token-measurement calls (see below). */
+const MEASURE_THINKING_LEVEL = "low";
 
 /**
  * Pricing verified 2026-07-25 from https://ai.google.dev/gemini-api/docs/pricing
@@ -67,257 +124,221 @@ function ai(): GoogleGenAI {
 }
 
 // --------------------------------------------------------------------------
-// JSON Schema -> Gemini Schema
+// Local structural types
+//
+// The SDK keeps its Interactions step/tool types inside an unexported
+// `declare namespace interactions`, so they cannot be imported by name. These
+// mirror the SDK's shapes (all snake_case on this API surface) and are cast at
+// the two call sites.
 // --------------------------------------------------------------------------
 
-/**
- * Gemini's `FunctionDeclaration.parameters` is an OpenAPI 3.03 Schema subset,
- * not full JSON Schema, and the API hard-rejects unknown keywords rather than
- * ignoring them. We therefore allowlist, which is strictly safer than chasing a
- * denylist of whatever the API happens to complain about today.
- *
- * Keys that are consequently stripped include (non-exhaustive):
- *   additionalProperties, $schema, $id, $ref, $defs, definitions, default,
- *   example, examples, const, oneOf, allOf, not, if/then/else, patternProperties,
- *   additionalItems, unevaluatedProperties, multipleOf, exclusiveMinimum,
- *   exclusiveMaximum, uniqueItems, readOnly, writeOnly, deprecated, $comment.
- *
- * `const` is not simply dropped: it is lowered to a single-value `enum`, which
- * Gemini does understand, so the constraint survives.
- */
-const ALLOWED_SCHEMA_KEYS = new Set([
-  "type",
-  "format",
-  "title",
-  "description",
-  "nullable",
-  "enum",
-  "items",
-  "properties",
-  "required",
-  "propertyOrdering",
-  "anyOf",
-  "minimum",
-  "maximum",
-  "minItems",
-  "maxItems",
-  "minLength",
-  "maxLength",
-  "minProperties",
-  "maxProperties",
-  "pattern",
-]);
+type TextContent = { type: "text"; text: string };
 
-/** Schema fields the API models as proto int64, i.e. serialised as strings. */
-const INT64_SCHEMA_KEYS = new Set([
-  "minItems",
-  "maxItems",
-  "minLength",
-  "maxLength",
-  "minProperties",
-  "maxProperties",
-]);
-
-/**
- * Gemini only accepts a handful of `format` values, keyed by type. Anything
- * else (`uri`, `email`, `uuid`, `hostname`, ...) is rejected outright, so we
- * drop formats we cannot vouch for. `format` is documentary here anyway.
- */
-const ALLOWED_FORMATS: Record<string, Set<string>> = {
-  STRING: new Set(["enum", "date-time"]),
-  INTEGER: new Set(["int32", "int64"]),
-  NUMBER: new Set(["float", "double"]),
+type FunctionTool = {
+  type: "function";
+  name: string;
+  description?: string;
+  parameters: Record<string, unknown>;
 };
 
-function sanitizeSchema(node: unknown): Record<string, any> {
-  if (node === null || typeof node !== "object" || Array.isArray(node)) {
-    // Booleans (`additionalProperties: true`) and junk collapse to "any object".
-    return {};
-  }
-  const src = node as Record<string, any>;
-  const out: Record<string, any> = {};
-
-  // JSON Schema allows a union `type`, e.g. ["string", "null"]. Gemini wants a
-  // single type plus the `nullable` flag.
-  let rawType: unknown = src.type;
-  if (Array.isArray(rawType)) {
-    const concrete = rawType.filter((t) => t !== "null");
-    if (concrete.length !== rawType.length) out.nullable = true;
-    rawType = concrete[0];
-  }
-  if (typeof rawType === "string") out.type = rawType.toUpperCase();
-
-  let rawFormat: unknown;
-
-  for (const [key, value] of Object.entries(src)) {
-    if (key === "type" || value === undefined) continue;
-    if (!ALLOWED_SCHEMA_KEYS.has(key)) continue;
-
-    switch (key) {
-      case "properties": {
-        if (value === null || typeof value !== "object") break;
-        const props: Record<string, Record<string, any>> = {};
-        for (const [propName, propSchema] of Object.entries(
-          value as Record<string, unknown>,
-        )) {
-          props[propName] = sanitizeSchema(propSchema);
-        }
-        if (Object.keys(props).length > 0) out.properties = props;
-        break;
-      }
-      case "items":
-        out.items = sanitizeSchema(value);
-        break;
-      case "anyOf":
-        if (Array.isArray(value) && value.length > 0) {
-          out.anyOf = value.map(sanitizeSchema);
-        }
-        break;
-      case "enum":
-        // Gemini types `enum` as string[]; coerce numeric/boolean enums.
-        if (Array.isArray(value) && value.length > 0) {
-          out.enum = value.map((v) => String(v));
-        }
-        break;
-      case "required":
-        if (Array.isArray(value) && value.length > 0) {
-          out.required = value.filter((v) => typeof v === "string");
-        }
-        break;
-      case "propertyOrdering":
-        if (Array.isArray(value) && value.length > 0) out.propertyOrdering = value;
-        break;
-      case "format":
-        rawFormat = value;
-        break;
-      default:
-        out[key] = INT64_SCHEMA_KEYS.has(key) ? String(value) : value;
+/** Steps we send. */
+type InputStep =
+  | { type: "user_input"; content: TextContent[] }
+  | { type: "model_output"; content: TextContent[] }
+  | { type: "thought"; signature?: string; summary?: unknown }
+  | {
+      type: "function_call";
+      id: string;
+      name: string;
+      arguments: Record<string, any>;
+      /** Opaque reasoning signature. Validated server-side; cannot be forged. */
+      signature?: string;
     }
+  | {
+      type: "function_result";
+      call_id: string;
+      name?: string;
+      is_error?: boolean;
+      result: TextContent[];
+    };
+
+/** Steps we read back. Only the fields this adapter touches. */
+type ResponseStep = {
+  type: string;
+  id?: string;
+  name?: string;
+  arguments?: Record<string, any>;
+  content?: Array<{ type?: string; text?: string }>;
+  error?: { code?: number; message?: string };
+};
+
+type ResponseUsage = {
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  total_thought_tokens?: number;
+  total_cached_tokens?: number;
+  total_tool_use_tokens?: number;
+  total_tokens?: number;
+};
+
+type InteractionResponse = {
+  status?: string;
+  steps?: ResponseStep[];
+  usage?: ResponseUsage;
+};
+
+/**
+ * Step types the model produces. Used both to pick the generated tail out of a
+ * response and to decide what may be replayed verbatim as history.
+ */
+const MODEL_STEP_TYPES = new Set([
+  "thought",
+  "model_output",
+  "function_call",
+  "google_search_call",
+  "google_search_result",
+  "code_execution_call",
+  "code_execution_result",
+  "url_context_call",
+  "url_context_result",
+  "file_search_call",
+  "file_search_result",
+  "mcp_server_tool_call",
+  "mcp_server_tool_result",
+]);
+
+// --------------------------------------------------------------------------
+// Tools
+// --------------------------------------------------------------------------
+
+function isPlainObject(v: unknown): v is Record<string, any> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Recursively drop `required` entries that name a property absent from the
+ * sibling `properties` map. This is the one schema repair the live API forces
+ * on us (it 400s otherwise), and it is deliberately the *only* transformation
+ * applied — everything else is passed through so the measured token cost is the
+ * arm's actual schema.
+ */
+function fixRequired(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(fixRequired);
+  if (!isPlainObject(node)) return node;
+
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(node)) {
+    out[key] = key === "required" ? value : fixRequired(value);
   }
 
-  // `const: "x"` -> `enum: ["x"]`, preserving the constraint Gemini would
-  // otherwise never see.
-  if (src.const !== undefined && out.enum === undefined) {
-    out.enum = [String(src.const)];
-    if (out.type === undefined && typeof src.const === "string") out.type = "STRING";
-  }
-
-  if (out.type === undefined && out.properties !== undefined) out.type = "OBJECT";
-  if (out.type === undefined && out.items !== undefined) out.type = "ARRAY";
-  if (out.type === undefined && out.enum !== undefined && out.anyOf === undefined) {
-    out.type = "STRING";
-  }
-
-  if (typeof rawFormat === "string") {
-    const allowed = ALLOWED_FORMATS[String(out.type)];
-    if (allowed?.has(rawFormat)) out.format = rawFormat;
-  }
-
-  // An OBJECT with no declared properties and no constraints is rejected by
-  // some Gemini validators; `required` referencing absent properties likewise.
-  if (out.type === "OBJECT" && out.properties === undefined) {
-    delete out.required;
-    delete out.propertyOrdering;
-  } else if (out.properties && Array.isArray(out.required)) {
+  if (Array.isArray(out.required) && isPlainObject(out.properties)) {
     const known = new Set(Object.keys(out.properties));
-    out.required = out.required.filter((r: string) => known.has(r));
-    if (out.required.length === 0) delete out.required;
+    const kept = out.required.filter((r: unknown) => typeof r === "string" && known.has(r));
+    if (kept.length > 0) out.required = kept;
+    else delete out.required;
+  } else if (Array.isArray(out.required) && out.properties === undefined) {
+    // No property map to validate against; the API rejects every name.
+    delete out.required;
   }
 
   return out;
 }
 
-/** Anthropic-shaped tools -> one flat `functionDeclarations` array. */
-function toFunctionDeclarations(tools: WireTool[]): FunctionDeclaration[] {
-  return tools.map((tool) => {
-    const decl: FunctionDeclaration = { name: tool.name };
-    if (tool.description) decl.description = tool.description;
+/**
+ * `parameters` is REQUIRED on this API — omitting it 400s with "schema at
+ * top-level must be a boolean or an object" even for a zero-argument tool — so
+ * fall back to an empty object schema, which the API does accept.
+ */
+function prepareParameters(schema: unknown): Record<string, unknown> {
+  if (!isPlainObject(schema)) return { type: "object", properties: {} };
+  const fixed = fixRequired(schema) as Record<string, unknown>;
+  if (Object.keys(fixed).length === 0) return { type: "object", properties: {} };
+  return fixed;
+}
 
-    const params = sanitizeSchema(tool.input_schema ?? {});
-    // Gemini rejects an OBJECT parameter schema with an empty property map, and
-    // the field is optional for zero-argument tools, so omit it entirely.
-    if (params.properties && Object.keys(params.properties).length > 0) {
-      decl.parameters = params as Schema;
-    }
+/** Anthropic-shaped tools -> Interactions `function` tool declarations. */
+function toTools(tools: WireTool[]): FunctionTool[] {
+  return tools.map((tool) => {
+    const decl: FunctionTool = {
+      type: "function",
+      name: tool.name,
+      parameters: prepareParameters(tool.input_schema),
+    };
+    if (tool.description) decl.description = tool.description;
     return decl;
   });
 }
 
 // --------------------------------------------------------------------------
-// Messages -> contents
+// Messages -> input steps
 // --------------------------------------------------------------------------
 
 /**
- * Gemini 3.x attaches an opaque `thoughtSignature` to the part carrying a
- * function call, and expects it echoed back when that call is replayed as
- * conversation history. `ToolCall` in types.ts has nowhere to carry it, so we
- * stash signatures here keyed by (name, args) and re-attach on the way out.
- * Bounded so a long benchmark run cannot grow it without limit.
+ * The harness is stateless: it hands us the whole conversation every turn. We
+ * therefore replay history as an explicit `input` step array rather than using
+ * `previous_interaction_id`, which keeps this adapter's accounting identical to
+ * the other providers (all of which resend full history) and lets us set
+ * `store: false`.
+ *
+ * Gemini 3.x reasoning state lives on `thought` steps carrying an opaque
+ * `signature`. Those must be echoed back verbatim or the model re-reasons from
+ * scratch. `ChatMessage.raw` exists precisely for this, so an assistant turn is
+ * replayed from its recorded native steps when available, and only
+ * reconstructed from `text` + `toolCalls` as a fallback.
  */
-const thoughtSignatures = new Map<string, string>();
-const MAX_SIGNATURE_CACHE = 512;
-
-function signatureKey(name: string, args: Record<string, any>): string {
-  let serialised: string;
-  try {
-    serialised = JSON.stringify(args ?? {});
-  } catch {
-    serialised = "";
-  }
-  return `${name} ${serialised}`;
-}
-
-function rememberSignature(key: string, signature: string): void {
-  if (thoughtSignatures.size >= MAX_SIGNATURE_CACHE) {
-    const oldest = thoughtSignatures.keys().next();
-    if (!oldest.done) thoughtSignatures.delete(oldest.value);
-  }
-  thoughtSignatures.set(key, signature);
-}
-
-function toContents(messages: ChatMessage[]): Content[] {
-  const contents: Content[] = [];
+function toInputSteps(messages: ChatMessage[]): InputStep[] {
+  const steps: InputStep[] = [];
 
   for (const msg of messages) {
     if (msg.role === "user") {
-      contents.push({ role: "user", parts: [{ text: msg.content }] });
+      steps.push({ type: "user_input", content: [{ type: "text", text: msg.content }] });
       continue;
     }
 
     if (msg.role === "assistant") {
-      // Gemini names the assistant role "model".
-      const parts: Part[] = [];
-      if (msg.text) parts.push({ text: msg.text });
-      for (const call of msg.toolCalls ?? []) {
-        const part: Part = {
-          functionCall: { name: call.name, args: call.args ?? {} },
-        };
-        const signature = thoughtSignatures.get(
-          signatureKey(call.name, call.args ?? {}),
+      // Preferred path: replay the provider-native steps verbatim, preserving
+      // thought signatures and the real function_call ids.
+      if (Array.isArray(msg.raw) && msg.raw.length > 0) {
+        const replay = (msg.raw as ResponseStep[]).filter(
+          (s) => isPlainObject(s) && typeof s.type === "string" && MODEL_STEP_TYPES.has(s.type),
         );
-        if (signature) part.thoughtSignature = signature;
-        parts.push(part);
+        if (replay.length > 0) {
+          steps.push(...(replay as unknown as InputStep[]));
+          continue;
+        }
       }
-      if (parts.length === 0) continue;
-      contents.push({ role: "model", parts });
+
+      // Fallback: rebuild from the normalised fields. Reasoning state is lost.
+      if (msg.text) {
+        steps.push({ type: "model_output", content: [{ type: "text", text: msg.text }] });
+      }
+      for (const call of msg.toolCalls ?? []) {
+        steps.push({
+          type: "function_call",
+          id: call.id,
+          name: call.name,
+          arguments: call.args ?? {},
+        });
+      }
       continue;
     }
 
-    // tool_results: Gemini correlates a functionResponse to its functionCall by
-    // NAME, not by an id, so the name is the load-bearing field here.
-    const parts: Part[] = (msg.results ?? []).map((result) => ({
-      functionResponse: {
+    // tool_results -> one function_result step each. Correlation is by
+    // `call_id`, which must match the `id` the API assigned to the
+    // function_call step (this API does assign real ids).
+    for (const result of msg.results ?? []) {
+      const step: InputStep = {
+        type: "function_result",
+        call_id: result.id,
         name: result.name,
-        response: result.isError
-          ? { error: result.content }
-          : { output: result.content },
-      },
-    }));
-    if (parts.length === 0) continue;
-    contents.push({ role: "user", parts });
+        result: [{ type: "text", text: result.content }],
+      };
+      if (result.isError) step.is_error = true;
+      steps.push(step);
+    }
   }
 
-  return contents;
+  return steps;
 }
 
 /** `system` then `systemPreamble`, blank line between. Preamble omitted if empty. */
@@ -335,82 +356,99 @@ function buildSystemInstruction(
 // Response normalisation
 // --------------------------------------------------------------------------
 
-const REFUSAL_FINISH_REASONS = new Set([
-  "SAFETY",
-  "RECITATION",
-  "BLOCKLIST",
-  "PROHIBITED_CONTENT",
-  "SPII",
-  "IMAGE_SAFETY",
-  "LANGUAGE",
-]);
-
+/**
+ * The Interactions API has no per-candidate `finishReason`. Completion state
+ * comes from `Interaction.status`, and content-level problems arrive as an
+ * `error` on the `model_output` step.
+ */
 function normaliseStopReason(
-  res: GenerateContentResponse,
+  res: InteractionResponse,
+  generated: ResponseStep[],
   hasToolCalls: boolean,
 ): string {
   if (hasToolCalls) return "tool_use";
 
-  // A prompt-level block returns 200 with no candidates; surface it as a
-  // refusal rather than throwing.
-  const blockReason = res.promptFeedback?.blockReason;
-  if (blockReason) return "refusal";
-  if (!res.candidates || res.candidates.length === 0) return "refusal";
+  const errored = generated.find((s) => s.type === "model_output" && s.error);
+  if (errored) return "refusal";
 
-  const finishReason = res.candidates[0]?.finishReason;
-  if (!finishReason) return "end_turn";
-
-  const raw = String(finishReason);
-  if (raw === "STOP") return "end_turn";
-  if (raw === "MAX_TOKENS") return "max_tokens";
-  if (REFUSAL_FINISH_REASONS.has(raw)) return "refusal";
-  return raw;
+  switch (res.status) {
+    case "completed":
+      return "end_turn";
+    // Output budget exhausted before the model finished.
+    case "incomplete":
+    case "budget_exceeded":
+      return "max_tokens";
+    case "failed":
+    case "cancelled":
+      return "refusal";
+    default:
+      return res.status ?? "end_turn";
+  }
 }
 
-function normaliseUsage(res: GenerateContentResponse): Usage {
-  const meta = res.usageMetadata;
-  // Thinking tokens are billed at the output rate and are not included in
-  // candidatesTokenCount, so they belong in outputTokens for costing.
-  const output =
-    (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0);
+/**
+ * Usage field names differ from `generateContent`'s `usageMetadata`:
+ *
+ *   promptTokenCount         -> total_input_tokens
+ *   candidatesTokenCount     -> total_output_tokens
+ *   thoughtsTokenCount       -> total_thought_tokens
+ *   cachedContentTokenCount  -> total_cached_tokens
+ *   (new)                    -> total_tool_use_tokens, total_tokens
+ *
+ * Verified on the live API that `total_output_tokens` EXCLUDES thinking, i.e.
+ * total_tokens == total_input_tokens + total_output_tokens +
+ * total_thought_tokens (observed 245 == 102 + 4 + 139). Thinking is billed at
+ * the output rate, so it is folded into `outputTokens` for costing.
+ */
+function normaliseUsage(res: InteractionResponse): Usage {
+  const u = res.usage;
   return {
-    promptTokens: meta?.promptTokenCount ?? 0,
-    outputTokens: output,
-    cachedTokens: meta?.cachedContentTokenCount ?? 0,
+    promptTokens: u?.total_input_tokens ?? 0,
+    outputTokens: (u?.total_output_tokens ?? 0) + (u?.total_thought_tokens ?? 0),
+    cachedTokens: u?.total_cached_tokens ?? 0,
   };
 }
 
-function normaliseResponse(res: GenerateContentResponse): ChatResult {
-  const parts = res.candidates?.[0]?.content?.parts ?? [];
+function normaliseResponse(res: InteractionResponse): ChatResult {
+  // `steps` can echo the replayed history, so keep only the model-produced
+  // tail: everything after the last step we supplied.
+  const all = res.steps ?? [];
+  let start = 0;
+  for (let i = all.length - 1; i >= 0; i--) {
+    const t = all[i]?.type;
+    if (t === "user_input" || t === "function_result") {
+      start = i + 1;
+      break;
+    }
+  }
+  const generated = all.slice(start).filter((s) => MODEL_STEP_TYPES.has(s.type));
+
   const toolCalls: ToolCall[] = [];
   let text = "";
 
-  for (const part of parts) {
-    // Thought summaries are not answer text.
-    if (part.thought) continue;
-
-    if (typeof part.text === "string") text += part.text;
-
-    if (part.functionCall) {
-      const name = part.functionCall.name ?? "";
-      const args = (part.functionCall.args ?? {}) as Record<string, any>;
-      // The Gemini Developer API does not assign call ids; synthesise a stable
-      // one from the tool name plus its ordinal within this turn. The real tool
-      // name goes in `name`, which is what the function response correlates on.
-      const id = part.functionCall.id ?? `${name}-${toolCalls.length}`;
-      toolCalls.push({ id, name, args });
-
-      if (part.thoughtSignature) {
-        rememberSignature(signatureKey(name, args), part.thoughtSignature);
+  for (const step of generated) {
+    if (step.type === "model_output") {
+      for (const block of step.content ?? []) {
+        if (block?.type === "text" && typeof block.text === "string") text += block.text;
       }
+    } else if (step.type === "function_call") {
+      toolCalls.push({
+        id: step.id ?? `${step.name ?? "call"}-${toolCalls.length}`,
+        name: step.name ?? "",
+        args: step.arguments ?? {},
+      });
     }
+    // `thought` steps are reasoning, not answer text. They are not read here
+    // but ARE carried in `raw` so they can be replayed with their signatures.
   }
 
   return {
     toolCalls,
     text,
     usage: normaliseUsage(res),
-    stopReason: normaliseStopReason(res, toolCalls.length > 0),
+    stopReason: normaliseStopReason(res, generated, toolCalls.length > 0),
+    // Round-tripped verbatim by the harness as `ChatMessage.raw`.
+    raw: generated,
   };
 }
 
@@ -419,11 +457,11 @@ function normaliseResponse(res: GenerateContentResponse): ChatResult {
 // --------------------------------------------------------------------------
 
 /** Smallest legal prompt, used as the constant baseline when measuring. */
-const PROBE_CONTENTS: Content[] = [{ role: "user", parts: [{ text: "x" }] }];
+const PROBE_INPUT = "x";
 
 /**
- * Output cap for the two measurement calls. Only `promptTokenCount` is read, so
- * this just needs to be small; it is not squeezed to 1 because Gemini 3 Pro
+ * Output cap for the two measurement calls. Only the input token count is read,
+ * so this just needs to be small; it is not squeezed to 1 because Gemini 3 Pro
  * always thinks and a too-tight cap can fail the request outright.
  */
 const MEASURE_MAX_TOKENS = 256;
@@ -435,22 +473,24 @@ export const geminiProvider: Provider = {
   priceOut: PRICE_OUT_PER_MTOK / 1_000_000,
 
   async chat(req: ChatRequest): Promise<ChatResult> {
-    const declarations = toFunctionDeclarations(req.tools);
+    const tools = toTools(req.tools);
 
-    const res = await ai().models.generateContent({
+    const res = (await ai().interactions.create({
       model: MODEL,
-      contents: toContents(req.messages),
-      config: {
-        maxOutputTokens: req.maxTokens,
-        systemInstruction: buildSystemInstruction(req.system, req.systemPreamble),
-        ...(declarations.length > 0
-          ? { tools: [{ functionDeclarations: declarations }] }
-          : {}),
-        // The harness drives the tool loop itself; never let the SDK try to
-        // invoke anything on our behalf.
-        automaticFunctionCalling: { disable: true },
+      input: toInputSteps(req.messages) as never,
+      ...(tools.length > 0 ? { tools: tools as never } : {}),
+      system_instruction: buildSystemInstruction(req.system, req.systemPreamble),
+      // History is replayed explicitly every turn, so nothing needs to be
+      // retained server-side.
+      store: false,
+      generation_config: {
+        max_output_tokens: req.maxTokens,
+        thinking_level: THINKING_LEVEL,
+        // tool_choice is left at its "auto" default: which tools the model
+        // picks, and whether it picks any, is exactly what the benchmark
+        // measures, so it must not be forced.
       },
-    });
+    })) as InteractionResponse;
 
     return normaliseResponse(res);
   },
@@ -458,75 +498,54 @@ export const geminiProvider: Provider = {
   /**
    * Prompt tokens attributable to the tool block + preamble.
    *
-   * METHOD USED: measurement by difference against two real `generateContent`
-   * calls, subtracting the reported `promptTokenCount`.
+   * METHOD USED: measurement by difference against two real
+   * `interactions.create` calls, subtracting the reported
+   * `usage.total_input_tokens`. Verified to move with the tool block (102 input
+   * tokens with a one-tool block vs 2 bare, on the same one-character probe).
    *
-   * Gemini does expose a dedicated `countTokens` endpoint, but it cannot do this
-   * job on the Gemini Developer API: passing either `tools` or
-   * `systemInstruction` in `CountTokensConfig` is rejected before the request
-   * even leaves the process. Verified against @google/genai v2.13.0, which
-   * throws:
+   * The dedicated `models.countTokens` endpoint is NOT used, for two reasons:
    *
-   *   "tools parameter is only supported in Gemini Enterprise Agent Platform
-   *    mode, not in Gemini Developer API mode."
-   *   "systemInstruction parameter is only supported in Gemini Enterprise Agent
-   *    Platform mode, not in Gemini Developer API mode."
+   *  1. It cannot see the system instruction on the Gemini Developer API. The
+   *     SDK rejects it client-side (verified against @google/genai v2.13.0):
+   *       "systemInstruction parameter is only supported in Gemini Enterprise
+   *        Agent Platform mode, not in Gemini Developer API mode."
+   *  2. Even if that were lifted, countTokens serialises the *legacy*
+   *     `generateContent` tool format, not the Interactions tool format we
+   *     actually bill on — so it would answer a different question than the one
+   *     this benchmark asks.
    *
-   * countTokens is therefore still attempted first, so that this adapter picks
-   * the cheap path automatically if Google ever lifts that restriction, but the
-   * generateContent difference is what actually runs today. Both calls use the
-   * same fixed one-word probe prompt, so the probe and any fixed scaffolding
-   * cancel out and only the tools + preamble remain. That costs a little money,
-   * which is why the harness calls this once per (arm, scenario).
+   * Measurement by difference costs a little money, which is why the harness
+   * calls this once per (arm, scenario) rather than per run. Both calls use the
+   * same fixed one-character probe prompt, so the probe and any fixed
+   * scaffolding cancel out and only the tools + preamble remain.
    */
   async measureToolBlock(tools: WireTool[], systemPreamble: string): Promise<number> {
-    const declarations = toFunctionDeclarations(tools);
-    const withTools =
-      declarations.length > 0
-        ? { tools: [{ functionDeclarations: declarations }] }
-        : {};
+    const declarations = toTools(tools);
     const systemInstruction = buildSystemInstruction("", systemPreamble);
+    const generationConfig = {
+      max_output_tokens: MEASURE_MAX_TOKENS,
+      thinking_level: MEASURE_THINKING_LEVEL,
+    };
 
-    try {
-      const loaded = await ai().models.countTokens({
+    const [loaded, bare] = (await Promise.all([
+      ai().interactions.create({
         model: MODEL,
-        contents: PROBE_CONTENTS,
-        config: { ...withTools, systemInstruction },
-      });
-      const bare = await ai().models.countTokens({
-        model: MODEL,
-        contents: PROBE_CONTENTS,
-      });
-      const delta = (loaded.totalTokens ?? 0) - (bare.totalTokens ?? 0);
-      if (delta > 0) return delta;
-    } catch {
-      // Expected today; fall through to the generateContent difference.
-    }
-
-    const [loaded, bare] = await Promise.all([
-      ai().models.generateContent({
-        model: MODEL,
-        contents: PROBE_CONTENTS,
-        config: {
-          maxOutputTokens: MEASURE_MAX_TOKENS,
-          systemInstruction,
-          ...withTools,
-          automaticFunctionCalling: { disable: true },
-        },
+        input: PROBE_INPUT,
+        ...(declarations.length > 0 ? { tools: declarations as never } : {}),
+        system_instruction: systemInstruction,
+        store: false,
+        generation_config: generationConfig,
       }),
-      ai().models.generateContent({
+      ai().interactions.create({
         model: MODEL,
-        contents: PROBE_CONTENTS,
-        config: {
-          maxOutputTokens: MEASURE_MAX_TOKENS,
-          automaticFunctionCalling: { disable: true },
-        },
+        input: PROBE_INPUT,
+        store: false,
+        generation_config: generationConfig,
       }),
-    ]);
+    ])) as [InteractionResponse, InteractionResponse];
 
     const delta =
-      (loaded.usageMetadata?.promptTokenCount ?? 0) -
-      (bare.usageMetadata?.promptTokenCount ?? 0);
+      (loaded.usage?.total_input_tokens ?? 0) - (bare.usage?.total_input_tokens ?? 0);
     return Math.max(0, delta);
   },
 };

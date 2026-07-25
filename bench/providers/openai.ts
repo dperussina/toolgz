@@ -2,67 +2,149 @@
  * OpenAI provider adapter for the benchmark harness.
  *
  * Translates the Anthropic-shaped wire format the arms emit
- * (`{name, description, input_schema}`) into OpenAI's Chat Completions
+ * (`{name, description, input_schema}`) into OpenAI's **Responses API**
  * function-tool format, and normalises the response back into `ChatResult`.
  *
- * ---------------------------------------------------------------------------
+ * ===========================================================================
+ * WHY /v1/responses AND NOT /v1/chat/completions
+ * ===========================================================================
+ * The previous revision of this file targeted `/v1/chat/completions`, where the
+ * GPT-5.x line refuses to combine function tools with reasoning. Verbatim
+ * error, reproduced live on gpt-5.6-sol / -terra / gpt-5.5 / gpt-5.4:
+ *
+ *   "Function tools with reasoning_effort are not supported for gpt-5.6-sol in
+ *    /v1/chat/completions. To use function tools, use /v1/responses or set
+ *    reasoning_effort to 'none'."
+ *
+ * That forced `reasoning_effort: "none"` on every tool-carrying turn, which is
+ * a benchmark-invalidating confound: the Anthropic arm runs at
+ * `output_config.effort: "high"` (see bench/providers/anthropic.ts:91).
+ *
+ * This revision ports the adapter to `/v1/responses`, where tools + reasoning
+ * DO work together. Verified live on 2026-07-25 with gpt-5.6-sol at
+ * `reasoning.effort` = "high", "xhigh" and "max": all three returned HTTP 200
+ * with a `function_call` output item, and the "max" run reported
+ * `output_tokens_details.reasoning_tokens: 13`. There is no restriction to
+ * report — reasoning is genuinely active alongside tools now.
+ *
+ * ===========================================================================
+ * DOCUMENTATION CONSULTED (fetched 2026-07-25, not recalled from memory)
+ * ===========================================================================
+ * - https://developers.openai.com/api/docs/guides/function-calling
+ *     (platform.openai.com/docs/guides/function-calling 301-redirects here)
+ * - https://developers.openai.com/api/docs/guides/reasoning
+ * - openai npm SDK 6.49.0 type definitions, which are generated from the
+ *   OpenAPI spec and are therefore the authoritative wire contract. The
+ *   platform.openai.com API-reference HTML returns 403 to plain fetches, so the
+ *   generated types + live calls were used instead.
+ *
+ * Findings, each one exercised against the live API:
+ *
+ * 1. TOOL SHAPE IS FLAT. Confirmed. On Responses it is
+ *      {type:"function", name, description, parameters, strict?}
+ *    NOT the Chat Completions shape `{type:"function", function:{...}}`.
+ *    SDK: `OpenAI.Responses.FunctionTool` (resources/responses/responses.d.ts).
+ *    `strict` is typed `boolean | null` but may be OMITTED on the wire; we omit
+ *    it, because the arms' `input_schema` is not guaranteed to satisfy strict
+ *    mode (which requires `additionalProperties:false` and every property in
+ *    `required`).
+ *
+ * 2. CONVERSATION HISTORY IS A FLAT `input[]` ITEM LIST, not a message list.
+ *    - user/developer/system text:  {role, content}
+ *    - a model tool call:           {type:"function_call", call_id, name,
+ *                                    arguments /* JSON string *\/, id?, status?}
+ *    - the result you feed back:    {type:"function_call_output", call_id,
+ *                                    output /* string *\/}
+ *    Note the id field is `call_id` on BOTH, and the result field is `output`
+ *    (Chat Completions used `tool_call_id` + `content`). There is no
+ *    `role:"tool"` item. Verified field names against
+ *    `ResponseFunctionToolCall` and `ResponseInputItem.FunctionCallOutput`.
+ *
+ * 3. REASONING ITEMS MUST BE ECHOED BACK. The function-calling guide says
+ *    verbatim: "Note that for reasoning models like GPT-5 or o4-mini, any
+ *    reasoning items returned in model responses with tool calls must also be
+ *    passed back with tool call outputs." The reasoning guide repeats it.
+ *    Reasoning items look like {type:"reasoning", id, summary:[],
+ *    encrypted_content:"gAAAA..."} and we round-trip them VERBATIM through the
+ *    harness's `ChatMessage.raw` channel (that field exists in types.ts for
+ *    exactly this reason). We request `include:["reasoning.encrypted_content"]`
+ *    so the items are self-contained and usable with `store:false`.
+ *    Verified: a turn-2 request carrying [user, reasoning, function_call,
+ *    function_call_output] returned HTTP 200 and a normal text answer.
+ *
+ * 4. REASONING EFFORT is `reasoning: {effort: ...}` (an object), not the
+ *    Chat Completions top-level `reasoning_effort`. Valid values per the
+ *    reasoning guide and `Shared.ReasoningEffort`:
+ *      'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+ *    (model-dependent; gpt-5.6-sol accepted high, xhigh and max here).
+ *    *** WE PIN "high" *** — see REASONING EFFORT CHOICE below.
+ *    `reasoning.context` also exists ('auto' | 'current_turn' | 'all_turns');
+ *    the response echoed `context:"all_turns"` for gpt-5.6-sol, i.e. reasoning
+ *    from every prior turn is rendered back. We deliberately leave it at the
+ *    model default because that mirrors the Anthropic arm, which returns all
+ *    prior thinking blocks unchanged.
+ *
+ * 5. USAGE FIELD NAMES ARE DIFFERENT from Chat Completions:
+ *      usage.input_tokens                          (was prompt_tokens)
+ *      usage.input_tokens_details.cached_tokens    (was
+ *                                   prompt_tokens_details.cached_tokens)
+ *      usage.input_tokens_details.cache_write_tokens   (new; not billed as
+ *                                   extra input, informational only)
+ *      usage.output_tokens                         (was completion_tokens)
+ *      usage.output_tokens_details.reasoning_tokens
+ *      usage.total_tokens
+ *    Reasoning tokens are BILLED AS OUTPUT TOKENS and are already included in
+ *    `output_tokens` — the reasoning guide: "they still occupy space in the
+ *    model's context window and are billed as output tokens". Verified
+ *    arithmetically on a live call: input 59 + output 33 = total 92, with
+ *    reasoning_tokens 13 inside that 33. So `outputTokens = output_tokens` is
+ *    correct and must NOT have reasoning_tokens added to it.
+ *    `cached_tokens` is INCLUDED in `input_tokens`, which matches this
+ *    harness's `Usage` contract. Verified live with a 4.7k-token repeated
+ *    prefix: {input_tokens: 4746, cached_tokens: 4671} on the second call —
+ *    4746 is the full count, not 4746+4671.
+ *
+ * 6. SDK SURFACE: yes, `client.responses.create(...)` exists (openai 6.49.0,
+ *    `OpenAI.Responses`). Non-streaming by default. Also present:
+ *    `client.responses.inputTokens.count(...)`, a real token-counting endpoint
+ *    for this API — see measureToolBlock for why we do not use it.
+ *
+ * 7. `max_output_tokens` (NOT `max_tokens`, NOT `max_completion_tokens`) is the
+ *    budget parameter, and it has a hard minimum. Verbatim 400:
+ *      "Invalid 'max_output_tokens': integer below minimum value. Expected a
+ *       value >= 16, but got 1 instead."
+ *    Like the Chat Completions budget it covers reasoning tokens as well as
+ *    visible output. Exceeding it yields `status:"incomplete"` with
+ *    `incomplete_details.reason:"max_output_tokens"` rather than a throw.
+ *
+ * 8. `temperature` is still rejected for any non-default value on this model,
+ *    so we never send it.
+ *
+ * 9. `store:false` is safe: prompt caching still works (verified — see 5), and
+ *    it keeps the benchmark stateless so no run can accidentally depend on
+ *    server-side conversation state. We therefore never use
+ *    `previous_response_id`, even though the reasoning guide recommends it as
+ *    the "simplest" way to preserve reasoning across turns; the harness owns
+ *    the transcript and replays it explicitly.
+ *
+ * ===========================================================================
  * MODEL CHOICE
- * ---------------------------------------------------------------------------
- * `gpt-5.6-sol` — OpenAI's current frontier / flagship reasoning model,
- * selected by querying `client.models.list()` live rather than from memory.
- * In the 5.6 naming scheme the number is the generation and the suffix is the
- * capability tier: Sol (flagship) > Terra (balanced) > Luna (cheap). Sol is
- * the only tier that unlocks max reasoning effort. The `*-pro` models
- * (gpt-5.5-pro etc.) are a previous generation and are Responses-API oriented,
- * and the `-codex` variants are task-specialised, so neither is the right
- * general-purpose flagship for a tool-calling benchmark.
+ * ===========================================================================
+ * `gpt-5.6-sol` — retained. Re-confirmed present in a live `models.list()` and
+ * confirmed to work on `/v1/responses` (the `*-pro` tiers' "This is not a chat
+ * model" 404 was a Chat-Completions-only restriction; it does not apply in
+ * reverse, gpt-5.6-sol is fine on Responses). In the 5.6 naming scheme the
+ * number is the generation and the suffix is the capability tier:
+ * Sol (flagship) > Terra (balanced) > Luna (cheap).
  *
- * ---------------------------------------------------------------------------
- * API QUIRKS HANDLED (all verified against the live API, not assumed)
- * ---------------------------------------------------------------------------
- * 1. `max_tokens` is REJECTED with HTTP 400:
- *      "Unsupported parameter: 'max_tokens' is not supported with this model.
- *       Use 'max_completion_tokens' instead."
- *    We therefore send `max_completion_tokens`. Note that this budget covers
- *    *reasoning* tokens as well as visible output tokens.
- *
- * 2. `temperature` is REJECTED for any value other than the default:
- *      "Unsupported value: 'temperature' does not support 0 with this model.
- *       Only the default (1) value is supported."
- *    We never send `temperature` at all.
- *
- * 3. `reasoning_effort` accepts 'none' | 'low' | 'medium' | 'high' | 'xhigh'.
- *    'minimal' (valid on the GPT-5.0 generation) is REJECTED.
- *
- * 4. *** THE BIG ONE ***  On /v1/chat/completions, function tools and
- *    reasoning are mutually exclusive for the entire GPT-5.x line:
- *      "Function tools with reasoning_effort are not supported for
- *       gpt-5.6-sol in /v1/chat/completions. To use function tools, use
- *       /v1/responses or set reasoning_effort to 'none'."
- *    Verified to reproduce on gpt-5.6-sol, gpt-5.6-terra, gpt-5.5 and gpt-5.4,
- *    at default effort and at 'high'. Only `reasoning_effort: "none"` is
- *    accepted alongside tools. We therefore FORCE `reasoning_effort: "none"`
- *    on every request that carries a tool block, and only honour the optional
- *    OPENAI_REASONING_EFFORT pin on tool-free turns.
- *    Consequence to report alongside any benchmark run: the OpenAI arm is
- *    measured with reasoning disabled, while the Anthropic arm pins
- *    `output_config.effort: "high"`. That is a real confound. Lifting it
- *    requires porting this adapter to /v1/responses, which uses a different
- *    tool shape (flat `{type,name,parameters}`, no nested `function:` object)
- *    than the one this harness specifies.
- *
- * 5. `max_completion_tokens: 1` raises HTTP 400 ("Could not finish the message
- *    because max_tokens or model output limit was reached"). Anything >= ~16
- *    is safe and simply returns `finish_reason: "length"` instead of throwing,
- *    so the measurement probes use a floor of 16.
- *
- * 6. Automatic prefix caching is reported at
- *    `usage.prompt_tokens_details.cached_tokens` and is *included* in
- *    `usage.prompt_tokens` — which matches this harness's `Usage` contract.
- *
- * 7. `gpt-5.6-sol` is chat-capable; the `*-pro` tiers (e.g. gpt-5.5-pro) 404 on
- *    /v1/chat/completions ("This is not a chat model"), another reason they are
- *    not the right pick here.
+ * ===========================================================================
+ * REASONING EFFORT CHOICE: "high"
+ * ===========================================================================
+ * Pinned to "high" for like-for-like parity with the Anthropic arm, which pins
+ * `output_config: {effort: "high"}`. "xhigh" and "max" both work on this model
+ * and would spend more reasoning tokens, but "high" is the value that makes the
+ * two frontier arms comparable, which is the entire point of the fix.
+ * Overridable with OPENAI_REASONING_EFFORT for sensitivity runs.
  */
 
 import "dotenv/config";
@@ -77,14 +159,19 @@ import type {
   WireTool,
 } from "./types.js";
 
-type ChatCompletionMessageParam =
-  OpenAI.Chat.Completions.ChatCompletionMessageParam;
-type ChatCompletionFunctionTool =
-  OpenAI.Chat.Completions.ChatCompletionFunctionTool;
-type ReasoningEffort = OpenAI.Chat.Completions.ChatCompletionReasoningEffort;
+type ResponseInputItem = OpenAI.Responses.ResponseInputItem;
+type ResponseFunctionTool = OpenAI.Responses.FunctionTool;
+type ResponseOutputItem = OpenAI.Responses.ResponseOutputItem;
+type ReasoningEffort = OpenAI.ReasoningEffort;
 
 /** Frontier / flagship tier of the current generation. See MODEL CHOICE above. */
 const MODEL = "gpt-5.6-sol";
+
+/**
+ * Reasoning effort actually sent. See REASONING EFFORT CHOICE above.
+ * Anthropic arm parity value; not the maximum the model supports.
+ */
+const DEFAULT_EFFORT: ReasoningEffort = "high";
 
 /**
  * Pricing verified 2026-07-25 against OpenAI's published API pricing page
@@ -98,31 +185,35 @@ const PRICE_OUT_PER_MTOK = 30.0;
  *  exported so cost models that care about prefix caching can use it. */
 export const OPENAI_PRICE_CACHED_IN = 0.5 / 1_000_000;
 
-/** Smallest completion budget the model will accept without erroring. */
-const MIN_COMPLETION_TOKENS = 16;
+/** Hard API floor for max_output_tokens — see finding 7. */
+const MIN_OUTPUT_TOKENS = 16;
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
- * Optional effort pin, e.g. OPENAI_REASONING_EFFORT=high. Unset => API default.
- * Only consulted on tool-free turns — see quirk 4, tools force 'none'.
+ * Optional effort pin, e.g. OPENAI_REASONING_EFFORT=xhigh. Unlike the previous
+ * Chat Completions adapter this is honoured on EVERY turn, tool-carrying or
+ * not, because Responses has no tools-vs-reasoning conflict.
  */
-function effortOverride(): ReasoningEffort | undefined {
+function effort(): ReasoningEffort {
   const v = process.env.OPENAI_REASONING_EFFORT?.trim();
-  if (!v) return undefined;
-  return v as ReasoningEffort;
+  return v ? (v as ReasoningEffort) : DEFAULT_EFFORT;
 }
 
-/** Anthropic-shaped tool -> OpenAI function tool. */
-function toOpenAITools(tools: WireTool[]): ChatCompletionFunctionTool[] {
-  return tools.map((t) => ({
-    type: "function",
-    function: {
-      name: t.name,
-      ...(t.description ? { description: t.description } : {}),
-      parameters: t.input_schema as Record<string, unknown>,
-    },
-  }));
+/**
+ * Anthropic-shaped tool -> Responses function tool. FLAT, no `function:` nest
+ * (finding 1). `strict` intentionally omitted.
+ */
+function toResponsesTools(tools: WireTool[]): ResponseFunctionTool[] {
+  return tools.map(
+    (t) =>
+      ({
+        type: "function",
+        name: t.name,
+        ...(t.description ? { description: t.description } : {}),
+        parameters: t.input_schema as Record<string, unknown>,
+      }) as ResponseFunctionTool,
+  );
 }
 
 /**
@@ -151,18 +242,26 @@ function parseArgs(raw: string | undefined | null): Record<string, any> {
   }
 }
 
-function toOpenAIMessages(
+/**
+ * ChatMessage[] -> Responses `input[]`.
+ *
+ * The system text goes in as a `developer`-role item rather than the top-level
+ * `instructions` parameter. Verified equivalent in token cost (17 input tokens
+ * either way for the same string), and keeping it inside `input` means the
+ * measureToolBlock probes and chat() build their prompts through exactly the
+ * same code path.
+ */
+function toResponsesInput(
   system: string,
   systemPreamble: string,
   messages: ChatMessage[],
-): ChatCompletionMessageParam[] {
-  const out: ChatCompletionMessageParam[] = [];
+): ResponseInputItem[] {
+  const out: ResponseInputItem[] = [];
 
   const sys = joinSystem(system, systemPreamble);
   if (sys.trim()) {
-    // "developer" is the current name for the system role on reasoning models;
-    // "system" is still accepted and identical in token cost (verified), but
-    // developer is the documented forward-compatible spelling.
+    // "developer" is the reasoning-model spelling of the system role and is
+    // what Responses documents; "system" is still accepted.
     out.push({ role: "developer", content: sys });
   }
 
@@ -173,93 +272,146 @@ function toOpenAIMessages(
     }
 
     if (m.role === "assistant") {
-      const toolCalls = m.toolCalls ?? [];
-      out.push({
-        role: "assistant",
-        // `content: null` is only legal when tool_calls carry the turn; an
-        // assistant message with neither content nor tool_calls is rejected.
-        content: m.text ?? (toolCalls.length ? null : ""),
-        ...(toolCalls.length
-          ? {
-              tool_calls: toolCalls.map((tc) => ({
-                id: tc.id,
-                type: "function" as const,
-                function: {
-                  name: tc.name,
-                  arguments: JSON.stringify(tc.args ?? {}),
-                },
-              })),
-            }
-          : {}),
-      });
+      // Preferred path: replay the provider-native output items verbatim.
+      // This is what preserves the reasoning items (finding 3) — including
+      // their `encrypted_content` — so the model does not re-reason from
+      // scratch every turn.
+      const raw = m.raw;
+      if (Array.isArray(raw) && raw.length) {
+        for (const item of raw as ResponseOutputItem[]) {
+          out.push(item as unknown as ResponseInputItem);
+        }
+        continue;
+      }
+
+      // Fallback for transcripts that carry no `raw` (e.g. replayed from a
+      // stored jsonl). Reconstructs the shape but NOT the reasoning items, so
+      // the model will re-reason. Correctness preserved, cost is not.
+      if (m.text && m.text.trim()) {
+        out.push({
+          role: "assistant",
+          content: [{ type: "output_text", text: m.text, annotations: [] }],
+        } as unknown as ResponseInputItem);
+      }
+      for (const tc of m.toolCalls ?? []) {
+        out.push({
+          type: "function_call",
+          call_id: tc.id,
+          name: tc.name,
+          arguments: JSON.stringify(tc.args ?? {}),
+        } as ResponseInputItem);
+      }
       continue;
     }
 
-    // tool_results -> one {role:"tool"} message per result, each keyed by id.
+    // tool_results -> one function_call_output item per result, keyed by
+    // call_id (finding 2). No role:"tool" message on this API.
     for (const r of m.results) {
       out.push({
-        role: "tool",
-        tool_call_id: r.id,
-        content: r.isError ? `ERROR: ${r.content}` : r.content,
-      });
+        type: "function_call_output",
+        call_id: r.id,
+        output: r.isError ? `ERROR: ${r.content}` : r.content,
+      } as ResponseInputItem);
     }
   }
 
   return out;
 }
 
-function readUsage(usage: OpenAI.Completions.CompletionUsage | undefined): Usage {
+/** Responses usage -> harness Usage. Field names per finding 5. */
+function readUsage(usage: OpenAI.Responses.ResponseUsage | undefined): Usage {
   return {
-    promptTokens: usage?.prompt_tokens ?? 0,
-    outputTokens: usage?.completion_tokens ?? 0,
-    cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
+    // Total input tokens, cached portion already included.
+    promptTokens: usage?.input_tokens ?? 0,
+    // Already includes output_tokens_details.reasoning_tokens; adding them
+    // again would double-count. See finding 5.
+    outputTokens: usage?.output_tokens ?? 0,
+    cachedTokens: usage?.input_tokens_details?.cached_tokens ?? 0,
   };
 }
 
+/**
+ * Normalise to "tool_use" | "end_turn" | "max_tokens" | "refusal" | raw.
+ * Tool calls win first, matching bench/providers/anthropic.ts::normaliseStop so
+ * the two arms' stopReason columns mean the same thing.
+ */
 function normaliseStopReason(
-  finishReason: string | null | undefined,
+  status: string | undefined,
+  incompleteReason: string | undefined,
   hasToolCalls: boolean,
   refused: boolean,
 ): string {
   if (hasToolCalls) return "tool_use";
   if (refused) return "refusal";
-  switch (finishReason) {
-    case "tool_calls":
-    case "function_call":
-      return "tool_use";
-    case "stop":
-      return "end_turn";
-    case "length":
-      return "max_tokens";
-    case "content_filter":
-      return "refusal";
-    default:
-      return finishReason ?? "end_turn";
+  if (status === "incomplete") {
+    if (incompleteReason === "max_output_tokens") return "max_tokens";
+    if (incompleteReason === "content_filter") return "refusal";
+    return incompleteReason ?? "incomplete";
   }
+  if (status === "completed") return "end_turn";
+  return status ?? "end_turn";
 }
 
-/** Prompt tokens for a minimal probe request, with or without the tool block. */
-async function probePromptTokens(
+/** Pull the harness-visible pieces out of a Responses `output[]` array. */
+function readOutput(output: ResponseOutputItem[] | undefined): {
+  toolCalls: ToolCall[];
+  text: string;
+  refusal: string | null;
+} {
+  const toolCalls: ToolCall[] = [];
+  const textParts: string[] = [];
+  let refusal: string | null = null;
+
+  for (const item of output ?? []) {
+    if (item.type === "function_call") {
+      toolCalls.push({
+        // call_id, not id: it is what function_call_output must reference.
+        id: item.call_id,
+        name: item.name ?? "",
+        args: parseArgs(item.arguments),
+      });
+      continue;
+    }
+    if (item.type === "message") {
+      for (const part of item.content ?? []) {
+        if (part.type === "output_text") textParts.push(part.text);
+        else if (part.type === "refusal") refusal = part.refusal;
+      }
+    }
+    // "reasoning" items carry no harness-visible text (summary is off); they
+    // still travel back to the model via `raw`.
+  }
+
+  return { toolCalls, text: textParts.join(""), refusal };
+}
+
+/**
+ * Input tokens for a minimal probe request, with or without the tool block.
+ * Uses `responses.create` — the same endpoint chat() uses — deliberately, so
+ * the measured number is exactly what a real turn would be charged for.
+ * tool_choice:"none" keeps the probe from spending output tokens on a call;
+ * verified not to change input_tokens versus omitting it.
+ */
+async function probeInputTokens(
   tools: WireTool[] | null,
   systemPreamble: string,
 ): Promise<number> {
-  const messages = toOpenAIMessages("", tools ? systemPreamble : "", [
+  const input = toResponsesInput("", tools ? systemPreamble : "", [
     { role: "user", content: "ping" },
   ]);
 
-  const res = await client.chat.completions.create({
+  const res = await client.responses.create({
     model: MODEL,
-    messages,
-    max_completion_tokens: MIN_COMPLETION_TOKENS,
-    reasoning_effort: "none",
-    // tool_choice:"none" keeps the probe from spending output tokens on a call.
-    // Verified: it does NOT change prompt_tokens versus omitting it.
+    input,
+    max_output_tokens: MIN_OUTPUT_TOKENS,
+    reasoning: { effort: effort() },
+    store: false,
     ...(tools && tools.length
-      ? { tools: toOpenAITools(tools), tool_choice: "none" as const }
+      ? { tools: toResponsesTools(tools), tool_choice: "none" as const }
       : {}),
   });
 
-  return res.usage?.prompt_tokens ?? 0;
+  return res.usage?.input_tokens ?? 0;
 }
 
 export const openaiProvider: Provider = {
@@ -267,32 +419,35 @@ export const openaiProvider: Provider = {
   model: MODEL,
   priceIn: PRICE_IN_PER_MTOK / 1_000_000,
   priceOut: PRICE_OUT_PER_MTOK / 1_000_000,
+  // Cached input bills at 0.5/MTok vs 5.0 input (verified in this adapter).
+  priceCachedIn: OPENAI_PRICE_CACHED_IN,
 
   async chat(req: ChatRequest): Promise<ChatResult> {
-    const messages = toOpenAIMessages(
+    const input = toResponsesInput(
       req.system,
       req.systemPreamble,
       req.messages,
     );
-    const tools = toOpenAITools(req.tools ?? []);
-    // Quirk 4: any tool block on /v1/chat/completions forces effort "none".
-    const effort: ReasoningEffort | undefined = tools.length
-      ? "none"
-      : effortOverride();
+    const tools = toResponsesTools(req.tools ?? []);
 
-    let res: OpenAI.Chat.Completions.ChatCompletion;
+    let res: OpenAI.Responses.Response;
     try {
-      res = await client.chat.completions.create({
+      res = await client.responses.create({
         model: MODEL,
-        messages,
-        // NOTE: max_completion_tokens, never max_tokens (quirk 1). No
-        // temperature (quirk 2). Budget also covers reasoning tokens.
-        max_completion_tokens: Math.max(
-          MIN_COMPLETION_TOKENS,
-          req.maxTokens || MIN_COMPLETION_TOKENS,
+        input,
+        // max_output_tokens, never max_tokens/max_completion_tokens (finding
+        // 7). Budget also covers reasoning tokens. No temperature (finding 8).
+        max_output_tokens: Math.max(
+          MIN_OUTPUT_TOKENS,
+          req.maxTokens || MIN_OUTPUT_TOKENS,
         ),
+        // Reasoning ON, alongside tools. This is the whole point of the port.
+        reasoning: { effort: effort() },
+        // Self-contained reasoning items so they can be replayed with
+        // store:false (finding 3 / 9).
+        include: ["reasoning.encrypted_content"],
+        store: false,
         ...(tools.length ? { tools } : {}),
-        ...(effort ? { reasoning_effort: effort } : {}),
       });
     } catch (err: any) {
       // The contract says a refusal must surface as a stopReason, not a throw.
@@ -317,48 +472,41 @@ export const openaiProvider: Provider = {
       throw err;
     }
 
-    const choice = res.choices?.[0];
-    const msg = choice?.message;
-
-    const toolCalls: ToolCall[] = (msg?.tool_calls ?? []).flatMap((tc: any) => {
-      // Only function tool calls are meaningful here; custom tools are not used.
-      if (tc?.type && tc.type !== "function") return [];
-      return [
-        {
-          id: tc.id,
-          name: tc.function?.name ?? "",
-          args: parseArgs(tc.function?.arguments),
-        },
-      ];
-    });
-
-    const refusal = msg?.refusal ?? null;
-    const text = refusal ?? msg?.content ?? "";
+    const { toolCalls, text, refusal } = readOutput(res.output);
 
     return {
       toolCalls,
-      text: typeof text === "string" ? text : "",
+      text: refusal ?? text,
       usage: readUsage(res.usage),
       stopReason: normaliseStopReason(
-        choice?.finish_reason,
+        res.status,
+        res.incomplete_details?.reason,
         toolCalls.length > 0,
         refusal != null,
       ),
+      // The full output item list, replayed verbatim next turn so reasoning
+      // items survive (finding 3). types.ts documents this exact use.
+      raw: res.output,
     };
   },
 
   /**
-   * No token-counting endpoint exists for Chat Completions, so measure by
-   * difference: two tiny requests, one carrying tools + preamble and one bare,
-   * subtracting the reported prompt tokens. Costs a few hundred input tokens.
+   * Measured by difference: two tiny `responses.create` calls, one carrying
+   * tools + preamble and one bare, subtracting the reported input tokens.
+   *
+   * `client.responses.inputTokens.count()` exists and would be free, but it is
+   * a separate endpoint whose prompt rendering we have not validated against
+   * inference; measuring on the same endpoint chat() uses guarantees the number
+   * matches what the benchmark is actually billed for. Cost is ~2 tiny requests
+   * per (arm, scenario).
    */
   async measureToolBlock(
     tools: WireTool[],
     systemPreamble: string,
   ): Promise<number> {
     const [withTools, without] = await Promise.all([
-      probePromptTokens(tools, systemPreamble),
-      probePromptTokens(null, ""),
+      probeInputTokens(tools, systemPreamble),
+      probeInputTokens(null, ""),
     ]);
     return Math.max(0, withTools - without);
   },

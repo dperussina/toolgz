@@ -85,6 +85,16 @@ export interface Provider {
   /** $ per input / output token (not per million). */
   readonly priceIn: number;
   readonly priceOut: number;
+  /**
+   * $ per cached input token, when the provider discounts them.
+   *
+   * Without this, cached tokens bill at full input price and providers that
+   * cache aggressively look more expensive than they are — a real distortion,
+   * since cached reads are typically ~10% of input price. Omit when the
+   * provider does not discount, or when the rate is unknown; the runner then
+   * falls back to `priceIn` and the figure is an upper bound.
+   */
+  readonly priceCachedIn?: number;
 
   /** One turn. Must not throw on refusal — set stopReason instead. */
   chat(req: ChatRequest): Promise<ChatResult>;

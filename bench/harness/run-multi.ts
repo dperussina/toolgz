@@ -120,8 +120,13 @@ async function runOne(
       promptTokens += res.usage.promptTokens;
       outputTokens += res.usage.outputTokens;
       occupancy = res.usage.promptTokens;
+      // Cached input bills at a discount where the provider offers one; without
+      // that, heavy-caching providers look artificially expensive.
+      const cached = Math.min(res.usage.cachedTokens ?? 0, res.usage.promptTokens);
+      const uncached = res.usage.promptTokens - cached;
       usd +=
-        res.usage.promptTokens * provider.priceIn +
+        uncached * provider.priceIn +
+        cached * (provider.priceCachedIn ?? provider.priceIn) +
         res.usage.outputTokens * provider.priceOut;
 
       if (res.stopReason === "refusal") {
