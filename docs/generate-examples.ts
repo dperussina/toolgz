@@ -259,6 +259,18 @@ async function main() {
     f: c3.codeFor("github_create_issue"),
     a: { owner: "acme" },
   });
+  // The most common real failure across 360 runs: a model passing `query` to a
+  // parameter named `q`. Shown here because the error is what makes the retry
+  // land first time.
+  const nearMiss = c3.resolve("t", {
+    f: c3.codeFor("github_search_issues"),
+    a: { query: "memory leak org:acme" },
+  });
+  // Observed on claude-opus-5: the map code used as the tool name.
+  const codeAsName = c3.resolve(c3.codeFor("slack_post_message"), {
+    channel: "C123",
+    text: "shipped",
+  });
   const unknown = c3.resolve("t", { f: "zz9", a: {} });
   const lookup = c3.resolve("q", { c: c3.codeFor("github_search_issues") });
   const search = c3.resolve("q", { s: "slack" });
@@ -276,6 +288,18 @@ async function main() {
     "**An invented code:**",
     "",
     fence("json", JSON.stringify(unknown, null, 2)),
+    "",
+    "**A near-miss parameter name** — the most common real failure. It is not",
+    "silently remapped (that would guess at intent and could dispatch wrong",
+    "data); the error names the fix instead:",
+    "",
+    fence("json", JSON.stringify(nearMiss, null, 2)),
+    "",
+    "**The map code used as the tool name** — observed in real runs, and",
+    "accepted rather than rejected, since a code cannot be mistaken for",
+    "anything else:",
+    "",
+    fence("json", JSON.stringify(codeAsName, null, 2)),
     "",
     "**The model asking what a code takes** (`q` by code):",
     "",

@@ -44,15 +44,19 @@ export type Level = 0 | 1 | 2 | 3;
  *
  *   name           `a0 github_create_issue`
  *   name+required  `a0 github_create_issue owner,repo,title`
+ *   signature      `a0 github_create_issue(owner,repo,title,body?,labels?)`
  *   terse          `a0 create new issue in repository`
  *
  * `name` is the default and the smallest. `name+required` costs a few tokens
  * per tool and exists to cut malformed arguments on models that fill the
  * generic argument bag badly — the dispatcher levels give up provider-side
- * constrained decoding, and this buys some of it back cheaply. `terse` drops
- * the real name entirely; it is the most aggressive and the least legible.
+ * constrained decoding, and this buys some of it back cheaply. `signature` also
+ * names the optional parameters, which removes most remaining `q()` lookups —
+ * a bigger cached map traded for fewer turns, which matters on models where
+ * every turn pays for a fresh round of reasoning. `terse` drops the real name
+ * entirely; it is the most aggressive and the least legible.
  */
-export type MapStyle = "name" | "name+required" | "terse";
+export type MapStyle = "name" | "name+required" | "signature" | "terse";
 
 export type CompressOptions = {
   level?: Level;

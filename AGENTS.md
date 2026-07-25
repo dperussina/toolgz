@@ -87,14 +87,14 @@ bench/          the experiment — network lives here, never in src/
 brain/          SQLite brain (schema.sql, brain.ts) → brain.db
 specs/          Spec Kit specs; source of truth when spec and code disagree
 docs/RESULTS.md the experiment write-up
-.specify/       Spec Kit config, templates, constitution
+docs/           guide, results, generated before/after, constitution
 ```
 
 ---
 
 ## Non-negotiables
 
-Full text in `.specify/memory/constitution.md`. The load-bearing ones:
+Full text in `docs/CONSTITUTION.md`. The load-bearing ones:
 
 - **Never break the prompt cache.** Tool definitions render first; any byte change invalidates
   everything after. Sorted keys, stable ordering, no `Date.now()`, no `Math.random()`, no
@@ -118,7 +118,7 @@ Full text in `.specify/memory/constitution.md`. The load-bearing ones:
 ## Methodology
 
 - **Spec Kit** — a feature gets a spec in `specs/` before it gets code. Spec wins over code
-  when they disagree. Skills are in `.claude/skills/speckit-*`.
+  when they disagree. Spec Kit tooling is not committed — regenerate with `specify init --here` if you want the slash commands.
 - **SQLite brain** (`brain.db`) — durable cross-session memory: tasks, decisions *and their
   rationale*, sweeps, per-run results. Query it before asking "what did we decide about X?".
   Tables: `tasks`, `decisions`, `sweeps`, `sweep_results`; views `v_arm_summary`, `v_open_tasks`.

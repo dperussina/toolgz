@@ -62,6 +62,11 @@ describe("docs/BEFORE-AFTER.md is generated from the real library", () => {
     const cases = [
       c.resolve("t", { f: c.codeFor("github_create_issue"), a: { owner: "acme" } }),
       c.resolve("t", { f: "zz9", a: {} }),
+      c.resolve("t", {
+        f: c.codeFor("github_search_issues"),
+        a: { query: "memory leak org:acme" },
+      }),
+      c.resolve(c.codeFor("slack_post_message"), { channel: "C123", text: "shipped" }),
       c.resolve("q", { c: c.codeFor("github_search_issues") }),
       c.resolve("q", { s: "slack" }),
     ];

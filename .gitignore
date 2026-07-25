@@ -162,3 +162,8 @@ bench/rec-demo.ts
 _tmp_*
 _probe_*
 _*_probe_*
+
+# Agent tooling scaffold — regenerable, and 6x the size of the library itself.
+# Recreate with: uvx --from git+https://github.com/github/spec-kit.git specify init --here
+.claude/
+.specify/

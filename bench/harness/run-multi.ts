@@ -102,6 +102,8 @@ async function runOne(
   let usd = 0;
   let turn = 0;
   let error: string | undefined;
+  /** Diagnostics: what the model actually emitted when resolve() rejected it. */
+  const rejects: { raw: string; args: string; why: string }[] = [];
 
   try {
     while (turn < sc.maxTurns) {
@@ -151,6 +153,11 @@ async function runOne(
         } else if (r.kind === "error") {
           if (/no such tool|no code|unknown op/i.test(r.message)) hallucinated++;
           else malformed++;
+          rejects.push({
+            raw: call.name,
+            args: JSON.stringify(call.args ?? {}).slice(0, 300),
+            why: r.message.slice(0, 200),
+          });
           results.push({
             id: call.id,
             name: call.name,
@@ -205,6 +212,7 @@ async function runOne(
     wallMs: Date.now() - started,
     costUsd: usd,
     error,
+    ...(rejects.length ? { rejects } : {}),
   };
 }
 

@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 
 const DIR = new URL("./results/", import.meta.url).pathname;
-const ORDER = ["control","signatures","native","hybrid","minified-terse","minified","minified-default","minified-plus"];
+const ORDER = ["control","signatures","native","hybrid","minified-terse","minified","minified-default","minified-plus","minified-sig"];
 
 type Row = {
   provider: string;

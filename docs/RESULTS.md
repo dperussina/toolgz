@@ -352,3 +352,23 @@ below that tier.
 5. A real MCP catalogue rather than the synthetic fixture.
 6. ~~More reps on the Haiku `native` result.~~ **Done: 6/30, the 20% rate
    reproduced exactly at 3× the sample.**
+
+---
+
+## Claims not to make
+
+Guard-rails for anyone else writing about this:
+
+- ❌ "80% cheaper" — it is not. Cost rose 15% on OpenAI. The claim is
+  **context-window occupancy**.
+- ❌ "Works on any model" — measured on four frontier models from four vendors.
+  Below the frontier tier, argument errors rise sharply (17/30 runs on
+  Haiku 4.5, all recovered).
+- ❌ "Beats Anthropic's tool search" — it does not beat it on tool-block size.
+  It composes with it, and is more reliable below the frontier tier.
+- ❌ "Lossless" — at levels 2–3 you give up provider-side constrained decoding.
+  The library replaces that guarantee with its own validation; that is a
+  trade, not a free lunch.
+- ❌ Any figure not in this document. Every number there is
+  recomputable from committed data.
+

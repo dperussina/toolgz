@@ -181,7 +181,18 @@ export const ARMS: CompressionStrategy[] = [
 ];
 
 /** Arm-A variants, opted into with --variants. */
-export const A_VARIANTS: CompressionStrategy[] = [minifiedTerse, minifiedPlus];
+/** Full signature in the map: trades a larger cached map for fewer lookups. */
+export const minifiedSig = fromLibrary(
+  "minified-sig",
+  "Arm A‴ · minified + full signature in map",
+  { level: 3, mapStyle: "signature" },
+);
+
+export const A_VARIANTS: CompressionStrategy[] = [
+  minifiedTerse,
+  minifiedPlus,
+  minifiedSig,
+];
 
 /** Maps each library-backed arm to the configuration it must equal. */
 export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
@@ -192,4 +203,5 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedDefault, opts: { level: 3 } },
   { arm: minifiedTerse, opts: { level: 3, mapStyle: "terse" } },
   { arm: minifiedPlus, opts: { level: 3, mapStyle: "name+required" } },
+  { arm: minifiedSig, opts: { level: 3, mapStyle: "signature" } },
 ];

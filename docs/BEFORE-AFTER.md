@@ -501,6 +501,33 @@ for the model to read, not for a log file.
 }
 ```
 
+**A near-miss parameter name** — the most common real failure. It is not
+silently remapped (that would guess at intent and could dispatch wrong
+data); the error names the fix instead:
+
+```json
+{
+  "kind": "error",
+  "message": "Missing required parameter \"q\" for github_search_issues. Required: q. You passed \"query\" — did you mean \"q\"? Rename it.",
+  "recoverable": true
+}
+```
+
+**The map code used as the tool name** — observed in real runs, and
+accepted rather than rejected, since a code cannot be mistaken for
+anything else:
+
+```json
+{
+  "kind": "call",
+  "name": "slack_post_message",
+  "args": {
+    "channel": "C123",
+    "text": "shipped"
+  }
+}
+```
+
 **The model asking what a code takes** (`q` by code):
 
 ```json

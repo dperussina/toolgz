@@ -38,7 +38,7 @@ export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
 const LEVELS: Level[] = [0, 1, 2, 3];
-const MAP_STYLES: MapStyle[] = ["name", "name+required", "terse"];
+const MAP_STYLES: MapStyle[] = ["name", "name+required", "signature", "terse"];
 
 const err = (message: string, recoverable = true): Resolution => ({
   kind: "error",
@@ -296,6 +296,8 @@ export function compress(
   // fill the generic argument bag poorly.
   const renderLine = (code: string, t: NormalizedTool): string => {
     if (mapStyle === "terse") return `${code} ${terseDescriptor(t.description) || t.name}`;
+    // Full signature: optional params included, so the model rarely needs q().
+    if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
     if (mapStyle === "name+required") {
       const req = t.schema.required ?? [];
       return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
@@ -330,7 +332,9 @@ export function compress(
   const mapLegend =
     mapStyle === "name+required"
       ? "Each line is: code name required-args. "
-      : "";
+      : mapStyle === "signature"
+        ? "Each line is: code name(args), where ? marks optional. "
+        : "";
   const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.`;
 
   return finish(
@@ -364,12 +368,31 @@ export function compress(
           result: hits.length ? hits.join("\n") : `No matches for "${args.s}".`,
         };
       }
-      if (name !== "t") {
+      // Models sometimes call the map code as the tool name — observed on
+      // claude-opus-5: name="b5", args={f:"b5", a:"{…}"}. Codes are unique and
+      // cannot collide with `t` or `q`, so this form is unambiguous and
+      // accepting it removes a whole class of wasted turn.
+      const viaCode = name !== "t" && name !== "q" ? codeToTool.get(name) : undefined;
+      if (!viaCode && name !== "t") {
         return err(`No tool named "${name}". Invoke tools with t(f=<code>).`);
       }
-      const t = codeToTool.get(String(args.f));
+
+      const t = viaCode ?? codeToTool.get(String(args.f));
       if (!t) return err(`No map code "${args.f}". Search with q(s=…).`);
-      return finalize(t, asObject(args.a));
+
+      // Args may arrive nested under `a`, or flat alongside `f`. Prefer `a`
+      // when present rather than merging, so there is one source of truth.
+      const nested = asObject(args.a);
+      const flat = Object.fromEntries(
+        Object.entries(args).filter(([k]) => k !== "f" && k !== "a"),
+      );
+      const callArgs =
+        args.a !== undefined && Object.keys(nested).length
+          ? nested
+          : Object.keys(flat).length
+            ? flat
+            : nested;
+      return finalize(t, callArgs);
     },
     (name, args) => ({ name: "t", args: { f: toolToCode.get(name)!, a: args } }),
   );

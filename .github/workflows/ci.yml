@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: CI only needs to read the tree.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor declared in package.json engines; 22 is what we develop on.
+        node: [20, 22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # The offline suite. It must never need a network or a key — the live
+      # integration tests are excluded by the `test` script precisely so CI
+      # stays deterministic and free.
+      - name: Test
+        run: npm test
+
+      - name: Typecheck (library)
+        run: npx tsc --noEmit
+
+      # tsconfig scopes `include` to src/, so bench/ and docs/ would otherwise
+      # go unchecked. They are dev code, but they are the code that produces our
+      # published numbers, so they get checked too.
+      - name: Typecheck (bench + docs)
+        run: |
+          npx tsc --noEmit --ignoreConfig \
+            --target ES2022 --module nodenext --moduleResolution nodenext \
+            --strict --esModuleInterop --skipLibCheck --types node \
+            bench/**/*.ts docs/generate-examples.ts
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify the package would publish something usable
+        run: |
+          test -f dist/index.js || { echo "dist/index.js missing"; exit 1; }
+          test -f dist/index.d.ts || { echo "dist/index.d.ts missing"; exit 1; }
+          npm pack --dry-run
+
+  # The docs claim to be generated from the library. Prove it on every push
+  # rather than trusting it — this is the same guard tests/examples.test.ts
+  # applies, run against a clean checkout.
+  docs-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # No ANTHROPIC_API_KEY in CI, so token counts are omitted and the file
+      # would differ on those lines alone. Compare the structural content the
+      # test asserts instead of byte-diffing the whole file.
+      - name: Docs match the library
+        run: npx vitest run tests/examples.test.ts

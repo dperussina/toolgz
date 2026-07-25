@@ -1,0 +1,84 @@
+name: Publish to npm
+
+# Publishing is deliberately not automatic on push to main. It fires when you
+# publish a GitHub Release, or when you run it by hand — so cutting a version is
+# an explicit act, not a side effect of merging.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Pack and validate without publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # Required for npm provenance: the OIDC token is what lets npm attest that
+  # this tarball was built by this workflow from this commit.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-publish
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - run: npm ci
+
+      # Never publish something that does not pass. `prepublishOnly` also runs
+      # build+test, but failing here gives a clearer signal than failing inside
+      # the publish step.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # A release tag of v1.2.3 must match package.json 1.2.3. Catching a
+      # mismatch here beats shipping a version nobody can correlate to a tag.
+      - name: Tag matches package.json version
+        if: github.event_name == 'release'
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package.json=$PKG  tag=$TAG"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::Release tag '$GITHUB_REF_NAME' does not match package.json version '$PKG'."
+            exit 1
+          fi
+
+      - name: Refuse to republish an existing version
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VER="$(node -p "require('./package.json').version")"
+          if npm view "$NAME@$VER" version >/dev/null 2>&1; then
+            echo "::error::$NAME@$VER is already published. Bump the version."
+            exit 1
+          fi
+          echo "$NAME@$VER is new — ok to publish."
+
+      - name: Pack and show contents
+        run: |
+          npm pack
+          echo "--- tarball contents ---"
+          tar -tzf ./*.tgz | sort
+
+      - name: Publish (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: npm publish --dry-run --provenance --access public
+
+      - name: Publish
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -131,6 +131,7 @@ const ARM_LABEL: Record<string, string> = {
   "minified-plus": "L3 + req args",
   "minified-terse": "L3 terse",
   "minified-default": "L3 (default)",
+  "minified-sig": "L3 + signature",
   native: "native search",
 };
 const ARM_ORDER = [
@@ -140,6 +141,7 @@ const ARM_ORDER = [
   "minified-terse",
   "minified",
   "minified-plus",
+  "minified-sig",
   "minified-default",
 ];
 
