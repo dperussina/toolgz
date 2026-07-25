@@ -23,8 +23,16 @@ HN's formatter is not markdown either. It supports only:
 | Blank line | paragraph break — the only layout tool |
 | `*text*` | *italic*. An unpaired asterisk italicises everything after it |
 | 2-space indent | monospace block that **does not wrap** — keep lines < 70 chars |
+| Text limit | **4,000 characters, counting each line break as 2** (see below) |
 | Bold, headings, tables, real lists | unsupported; render literally |
 | URLs | auto-linked |
+
+> **The character limit is stricter than it looks.** HN rejected a 4,454-character
+> body with *"Please limit text to 4000 characters. (This had 4496.)"* — 42 more
+> than the file contained, exactly its number of newlines. The composer submits LF
+> as CRLF, so the real budget is `characters + newlines`. Measuring the file the
+> obvious way understates it by one per line. `tests/announcement.test.ts` asserts
+> the true figure for both platforms.
 
 **Title** — hard 80-character limit, and HN truncates silently past it. All of
 these fit (length in brackets):
