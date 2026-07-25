@@ -10,7 +10,12 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 
-const DIR = new URL("./results/", import.meta.url).pathname;
+// --dir lets an archived round be analysed without pooling it with the live
+// top-level results, which would average two different library versions.
+const dirArg = process.argv.find((a) => a.startsWith("--dir="))?.split("=")[1];
+const DIR = dirArg
+  ? (dirArg.endsWith("/") ? dirArg : dirArg + "/")
+  : new URL("./results/", import.meta.url).pathname;
 const ORDER = ["control","signatures","native","hybrid","minified-terse","minified","minified-default","minified-plus","minified-sig"];
 
 type Row = {
