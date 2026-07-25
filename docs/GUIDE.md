@@ -345,11 +345,53 @@ rejects that combination.
 
 ### OpenAI
 
+OpenAI has **two endpoints with two different tool shapes**, and toolgz has an
+adapter for each. Pick by whether you want reasoning.
+
+**If you want tools *and* reasoning — use `/v1/responses`.** On the GPT-5.x
+line, `/v1/chat/completions` refuses the combination outright:
+
+```
+Function tools with reasoning_effort are not supported for gpt-5.6-sol in
+/v1/chat/completions. To use function tools, use /v1/responses or set
+reasoning_effort to 'none'.
+```
+
+```ts
+import { compress, forOpenAIResponses } from "toolgz";
+
+const c = compress(myTools, { level: 3 });
+const { tools, systemPreamble } = forOpenAIResponses(c);   // flat tool shape
+
+const res = await client.responses.create({
+  model: "gpt-5.6-sol",
+  reasoning: { effort: "high" },
+  max_output_tokens: 8000,
+  tools,
+  input: [
+    { type: "message", role: "developer",
+      content: SYSTEM + (systemPreamble ? "\n\n" + systemPreamble : "") },
+    { type: "message", role: "user", content: userMessage },
+  ],
+});
+```
+
+Two things about `/v1/responses` that will bite you otherwise:
+
+- History is a flat `input[]` list, not `messages`. A tool call round-trip is
+  `{type:"function_call", call_id, name, arguments}` followed by
+  `{type:"function_call_output", call_id, output}`.
+- **Reasoning items must be echoed back** alongside tool outputs on the next
+  turn, or the model re-reasons from scratch every turn. Push the whole
+  `response.output` array back verbatim.
+
+**If you don't need reasoning**, chat completions is fine and the tool shape is
+the nested one:
+
 ```ts
 import { compress, forOpenAI } from "toolgz";
 
-const c = compress(myTools, { level: 3 });
-const { tools, systemPreamble } = forOpenAI(c);
+const { tools, systemPreamble } = forOpenAI(compress(myTools, { level: 3 }));
 
 await client.chat.completions.create({
   model: "gpt-5.6-sol",
@@ -361,11 +403,13 @@ await client.chat.completions.create({
 });
 ```
 
-OpenAI's prefix caching is automatic with a ~1024-token floor, so there is no
-breakpoint to place — just keep your prefix stable.
+Either way, OpenAI's prefix caching is automatic with a ~1024-token floor, so
+there is no breakpoint to place — just keep your prefix stable. Cached input
+bills at roughly a tenth of the normal rate.
 
-> **Note:** on `/v1/chat/completions`, GPT-5.x rejects function tools combined
-> with reasoning. If you need both, use `/v1/responses`.
+`forOpenAI` emits `{type:"function", function:{…}}`; `forOpenAIResponses` emits
+the flat `{type:"function", name, …}`. Sending one shape to the other endpoint
+is a validation error, so match them.
 
 ### Google Gemini
 
@@ -627,9 +671,12 @@ Returns:
 
 ### Provider adapters
 
-- `forAnthropic(c, { cache?, ttl? })` → `{ tools, system }`
-- `forOpenAI(c)` → `{ tools, systemPreamble }`
-- `forGemini(c)` → `{ tools, systemPreamble }`
+| Adapter | Endpoint | Tool shape |
+|---|---|---|
+| `forAnthropic(c, { cache?, ttl? })` → `{ tools, system }` | Messages API | Anthropic native; places one `cache_control` breakpoint |
+| `forOpenAI(c)` → `{ tools, systemPreamble }` | `/v1/chat/completions` | nested `{type, function:{…}}` |
+| `forOpenAIResponses(c)` → `{ tools, systemPreamble }` | `/v1/responses` | **flat** `{type, name, …}` — required for tools + reasoning |
+| `forGemini(c)` → `{ tools, systemPreamble }` | `generateContent` | one `functionDeclarations` array |
 
 ### Renderers (exported for tooling)
 

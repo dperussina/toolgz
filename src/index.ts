@@ -378,5 +378,5 @@ export function compress(
 export { recommendLevel } from "./recommend.js";
 export type { Recommendation } from "./recommend.js";
 
-export { forAnthropic, forOpenAI, forGemini } from "./providers/index.js";
+export { forAnthropic, forOpenAI, forOpenAIResponses, forGemini } from "./providers/index.js";
 export type { CacheTtl } from "./providers/index.js";

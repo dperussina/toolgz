@@ -75,6 +75,35 @@ export function forOpenAI(c: CompressResult): {
 }
 
 /**
+ * OpenAI `/v1/responses` — the endpoint you need if you want tools *and*
+ * reasoning.
+ *
+ * The tool shape here is **flat**: `{type, name, description, parameters}`,
+ * with no `function:` envelope. This is not cosmetic — on the GPT-5.x line,
+ * `/v1/chat/completions` rejects function tools combined with reasoning
+ * ("To use function tools, use /v1/responses or set reasoning_effort to
+ * 'none'"), so a reasoning agent must be on this endpoint, and sending the
+ * nested chat-completions shape here is invalid.
+ *
+ * Reasoning effort is a request field (`reasoning: { effort }`), not something
+ * this adapter sets — it is yours to choose.
+ */
+export function forOpenAIResponses(c: CompressResult): {
+  tools: { type: "function"; name: string; description?: string; parameters?: any }[];
+  systemPreamble: string;
+} {
+  const tools = (c.tools as any[])
+    .filter((t) => !String(t.type ?? "").startsWith("tool_search_"))
+    .map((t) => ({
+      type: "function" as const,
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema,
+    }));
+  return { tools, systemPreamble: c.systemPreamble };
+}
+
+/**
  * Google Gemini: a single `functionDeclarations` array. Gemini rejects
  * several JSON Schema keywords, so unknown keys are dropped rather than
  * passed through.

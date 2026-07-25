@@ -98,14 +98,20 @@ const MEASURE_THINKING_LEVEL = "low";
  * Pricing verified 2026-07-25 from https://ai.google.dev/gemini-api/docs/pricing
  * (paid Standard tier, `gemini-3.1-pro-preview`):
  *
- *   input  $2.00 / 1M tokens  (prompts <= 200k;  $4.00 above)
- *   output $12.00 / 1M tokens (prompts <= 200k; $18.00 above)
+ *   input        $2.00 / 1M tokens  (prompts <= 200k;  $4.00 above)
+ *   output      $12.00 / 1M tokens (prompts <= 200k; $18.00 above)
+ *   cached input $0.20 / 1M tokens (prompts <= 200k;  $0.40 above)
  *
  * The harness wants $ per single token, and benchmark prompts sit far below the
  * 200k long-context threshold, so the short-context rate is the right one.
+ *
+ * The cache *storage* charge ($4.50 / 1M tokens / hour) is not modelled: the
+ * harness has no explicit-cache lifetime to bill against, and this arm never
+ * creates one.
  */
 const PRICE_IN_PER_MTOK = 2.0;
 const PRICE_OUT_PER_MTOK = 12.0;
+const PRICE_CACHED_IN_PER_MTOK = 0.2;
 
 // --------------------------------------------------------------------------
 // Client
@@ -280,14 +286,33 @@ function toTools(tools: WireTool[]): FunctionTool[] {
  * the other providers (all of which resend full history) and lets us set
  * `store: false`.
  *
- * Gemini 3.x reasoning state lives on `thought` steps carrying an opaque
- * `signature`. Those must be echoed back verbatim or the model re-reasons from
- * scratch. `ChatMessage.raw` exists precisely for this, so an assistant turn is
- * replayed from its recorded native steps when available, and only
- * reconstructed from `text` + `toolCalls` as a fallback.
+ * Gemini 3.x reasoning state is an opaque `signature` carried ON THE
+ * `function_call` step itself (observed step keys: id, signature, type, name,
+ * arguments), and on any `thought` step. The server cryptographically validates
+ * it — verified against the live API:
+ *
+ *   real id + real signature      -> 200 OK
+ *   real id, signature removed    -> 400 "Request contains an invalid argument."
+ *   real id, signature = garbage  -> 400 "Corrupted thought signature."
+ *   fabricated id + real signature-> 200 OK   (the id itself is NOT validated)
+ *
+ * So a `function_call` step CANNOT be synthesised — it must be replayed
+ * verbatim. `ChatMessage.raw` exists precisely for this and the harness always
+ * populates it, which is the path taken in practice.
+ *
+ * The fallback, for an assistant turn that arrives without `raw`, therefore
+ * must NOT emit `function_call` / `function_result` steps at all; forging one
+ * is a guaranteed 400. Instead the exchange is degraded to a plain-text
+ * transcript, which the API accepts and the model understands (verified: the
+ * narrative form still produced the correct final answer). Reasoning
+ * continuity is lost on that path, but the run does not crash.
  */
 function toInputSteps(messages: ChatMessage[]): InputStep[] {
   const steps: InputStep[] = [];
+  // Whether the most recent assistant turn was replayed as native steps. If it
+  // was not, its tool results must also be narrated, because a `function_result`
+  // step with no matching `function_call` confuses the model.
+  let lastAssistantWasNative = true;
 
   for (const msg of messages) {
     if (msg.role === "user") {
@@ -297,36 +322,48 @@ function toInputSteps(messages: ChatMessage[]): InputStep[] {
 
     if (msg.role === "assistant") {
       // Preferred path: replay the provider-native steps verbatim, preserving
-      // thought signatures and the real function_call ids.
-      if (Array.isArray(msg.raw) && msg.raw.length > 0) {
-        const replay = (msg.raw as ResponseStep[]).filter(
-          (s) => isPlainObject(s) && typeof s.type === "string" && MODEL_STEP_TYPES.has(s.type),
-        );
-        if (replay.length > 0) {
-          steps.push(...(replay as unknown as InputStep[]));
-          continue;
-        }
+      // the reasoning signatures without which the API rejects the request.
+      const replay = Array.isArray(msg.raw)
+        ? (msg.raw as ResponseStep[]).filter(
+            (s) =>
+              isPlainObject(s) && typeof s.type === "string" && MODEL_STEP_TYPES.has(s.type),
+          )
+        : [];
+      if (replay.length > 0) {
+        steps.push(...(replay as unknown as InputStep[]));
+        lastAssistantWasNative = true;
+        continue;
       }
 
-      // Fallback: rebuild from the normalised fields. Reasoning state is lost.
-      if (msg.text) {
-        steps.push({ type: "model_output", content: [{ type: "text", text: msg.text }] });
-      }
+      // Fallback: narrate. Reasoning state is lost, but nothing is forged.
+      lastAssistantWasNative = false;
+      const lines: string[] = [];
+      if (msg.text) lines.push(msg.text);
       for (const call of msg.toolCalls ?? []) {
-        steps.push({
-          type: "function_call",
-          id: call.id,
-          name: call.name,
-          arguments: call.args ?? {},
-        });
+        lines.push(`[tool_call] ${call.name}(${safeJson(call.args ?? {})})`);
+      }
+      if (lines.length > 0) {
+        steps.push({ type: "model_output", content: [{ type: "text", text: lines.join("\n") }] });
       }
       continue;
     }
 
-    // tool_results -> one function_result step each. Correlation is by
-    // `call_id`, which must match the `id` the API assigned to the
-    // function_call step (this API does assign real ids).
-    for (const result of msg.results ?? []) {
+    const results = msg.results ?? [];
+    if (results.length === 0) continue;
+
+    if (!lastAssistantWasNative) {
+      const lines = results.map(
+        (r) => `[${r.isError ? "tool_error" : "tool_result"}] ${r.name}: ${r.content}`,
+      );
+      steps.push({ type: "user_input", content: [{ type: "text", text: lines.join("\n") }] });
+      continue;
+    }
+
+    // tool_results -> one function_result step each. `call_id` echoes the id the
+    // API assigned to the function_call step. `name` is required in practice:
+    // omitting it returns 400 "Invalid input received.", despite the SDK typing
+    // it optional.
+    for (const result of results) {
       const step: InputStep = {
         type: "function_result",
         call_id: result.id,
@@ -339,6 +376,14 @@ function toInputSteps(messages: ChatMessage[]): InputStep[] {
   }
 
   return steps;
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /** `system` then `systemPreamble`, blank line between. Preamble omitted if empty. */
@@ -471,6 +516,7 @@ export const geminiProvider: Provider = {
   model: MODEL,
   priceIn: PRICE_IN_PER_MTOK / 1_000_000,
   priceOut: PRICE_OUT_PER_MTOK / 1_000_000,
+  priceCachedIn: PRICE_CACHED_IN_PER_MTOK / 1_000_000,
 
   async chat(req: ChatRequest): Promise<ChatResult> {
     const tools = toTools(req.tools);
