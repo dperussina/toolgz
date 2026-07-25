@@ -166,32 +166,39 @@ in your system prompt:
 
 ```
 <toolmap>
-a0 github_create_issue
-a1 github_list_issues
-b0 slack_post_message
+a0 github_create_issue owner,repo,title
+a1 github_list_issues owner,repo
+b0 slack_post_message channel,text
 </toolmap>
 ```
 
-The model calls `t(f="a0", a={owner:"acme", repo:"web", title:"Bug"})`. If it
-isn't sure what a code takes, it calls `q(c="a0")` and gets the full signature
-and description back. `q(s="pull request")` searches by keyword.
+Each line is `code  name  required-args`. The model calls
+`t(f="a0", a={owner:"acme", repo:"web", title:"Bug"})`. If it needs the optional
+parameters or the full description, it calls `q(c="a0")`. `q(s="pull request")`
+searches by keyword.
 
 **The trade:** at levels 2 and 3 the model fills a generic `object` argument
 bag, so the provider's sampler is no longer enforcing your schema. toolgz
 validates against your original schema instead and hands the model back an error
 it can act on. This is why `validate` defaults to `true` — leave it on.
 
-If you're on level 3 and want to cut argument errors further, add the required
-parameter names to the map:
+#### Why the map lists required arguments
+
+That is the default (`mapStyle: "name+required"`), and it was chosen on
+measurement, not taste. With bare names, `grok-4.5` answered one of our
+scenarios with **zero tool calls on 3 of 3 attempts** — no error, no malformed
+argument, just an unaided answer. Naming the required parameters fixed it 3/3.
+
+It also turned out cheaper, not dearer: the extra few tokens per line remove a
+`q()` discovery round-trip, so the whole conversation is shorter. Fewer turns,
+fewer tokens, fewer argument errors.
+
+Two other styles exist if you have a reason:
 
 ```ts
-compress(myTools, { level: 3, mapStyle: "name+required" });
-// map lines become:  a0 github_create_issue owner,repo,title
+compress(myTools, { level: 3, mapStyle: "name" });   // smallest map; verify your model copes
+compress(myTools, { level: 3, mapStyle: "terse" });  // descriptor instead of the name
 ```
-
-That costs a handful of tokens per tool against a full schema's ~400, and in
-measurement it *reduced* total tokens — the model needs fewer lookup round-trips,
-so the conversation gets shorter.
 
 ---
 
@@ -571,9 +578,10 @@ it names the accepted parameters and the model will retry. This is expected on
 levels 2 and 3 and is exactly what validation is for.
 
 **Lots of malformed arguments on a weaker model.**
-Expected, and it's formatting rather than tool choice. Two fixes: use
-`mapStyle: "name+required"` at level 3 (measured to reduce both errors *and*
-total tokens), or drop to level 1, which keeps provider-side schema enforcement.
+Expected, and it's formatting rather than tool choice. First check you have not
+overridden `mapStyle` away from the default `"name+required"` — that default
+exists precisely to prevent this. If you are already on it and still seeing
+errors, drop to level 1, which keeps provider-side schema enforcement.
 
 **`cache_read_input_tokens` is always 0.**
 Something in your prefix varies per request. See [§7](#7-prompt-caching).
@@ -648,7 +656,7 @@ number can be recomputed rather than trusted.
 | Option | Type | Default | Notes |
 |---|---|---|---|
 | `level` | `0 \| 1 \| 2 \| 3` | `1` | see [§3](#3-which-level-should-i-use) |
-| `mapStyle` | `"name" \| "name+required" \| "terse"` | `"name"` | level 3 only |
+| `mapStyle` | `"name" \| "name+required" \| "terse"` | `"name+required"` | level 3 only |
 | `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–3 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
