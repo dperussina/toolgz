@@ -127,11 +127,11 @@ const ARM_LABEL: Record<string, string> = {
   control: "uncompressed",
   signatures: "L1 signatures",
   hybrid: "L2 namespaces",
-  minified: "L3 minified",
-  "minified-plus": "L3 + req args",
-  "minified-terse": "L3 terse",
+  minified: "L3 bare names",
+  "minified-plus": "L3 default ✓",
+  "minified-terse": "L3 terse desc",
   "minified-default": "L3 (default)",
-  "minified-sig": "L3 + signature",
+  "minified-sig": "L3 signature",
   native: "native search",
 };
 const ARM_ORDER = [
@@ -164,7 +164,7 @@ function chartReduction(rows: Row[], t: Theme): string {
   const cols = 2;
   const rowsN = Math.ceil(providers.length / cols);
   const W = padX * 2 + cols * panelW + (cols - 1) * 26;
-  const H = 78 + rowsN * (panelH + titleH) + 62;
+  const H = 96 + rowsN * (panelH + titleH) + 62;
 
   const parts: string[] = [];
   parts.push(
@@ -174,14 +174,14 @@ function chartReduction(rows: Row[], t: Theme): string {
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
     `<text x="${padX}" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Prompt tokens saved vs. uncompressed tool definitions</text>`,
     wrapText(
-      "Higher is better. Same 5 tool-selection tasks, 30 confusable tools, 3 reps per arm.",
+      "Higher is better. Same 5 tool-selection tasks, 30 confusable tools, 3 reps per arm. \u2713 marks the shipped default.",
       padX, 52, W - padX * 2, 12.5, t.ink2,
     ),
   );
 
   providers.forEach((p, i) => {
     const cx = padX + (i % cols) * (panelW + 26);
-    const cy = 78 + Math.floor(i / cols) * (panelH + titleH);
+    const cy = 96 + Math.floor(i / cols) * (panelH + titleH);
     const pr = rows.filter((r) => r.provider === p);
     const model = pr[0]?.model ?? "";
     const base = mean(pr.filter((r) => r.arm === "control").map((r) => r.totalPromptTokens));
@@ -260,7 +260,7 @@ function chartReliability(rows: Row[], t: Theme): string {
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
     `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Bare tool names are not always enough signal to dispatch</text>`,
     wrapText(
-      "Tasks completed, 15 per cell. Every style saves roughly the same tokens, so reliability is what separates them - and only the bare-name map fails.",
+      "Tasks completed, 15 per cell. Every style saves roughly the same tokens, so reliability is what separates them. The shipped default has never failed; the bare-name map is the only one that has.",
       20, 52, W - 40, 12.5, t.ink2,
     ),
   ];

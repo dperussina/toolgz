@@ -176,6 +176,7 @@ trip. A test asserts that file matches the code, so it cannot drift.
 | **[Before / after](docs/BEFORE-AFTER.md)** | Generated, not illustrated. Both artifacts toolgz modifies, at every level. |
 | **[Full results](docs/RESULTS.md)** | Every number, the methodology, and what it does **not** establish. |
 | **[Announcement drafts](docs/ANNOUNCEMENT.md)** | Ready-to-post write-ups for HN and LinkedIn, plus claims *not* to make. |
+| **[Releasing](docs/RELEASING.md)** | Publishing to npm over OIDC, with no long-lived token. |
 
 ## Providers
 

@@ -33,6 +33,15 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
+      # Trusted publishing (OIDC) needs npm >= 11.5.1, and Node 22 still ships
+      # npm 10.x — without this the publish falls back to needing a token even
+      # when a Trusted Publisher is configured.
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+          node --version
+
       - run: npm ci
 
       # Never publish something that does not pass. `prepublishOnly` also runs
@@ -76,9 +85,21 @@ jobs:
       - name: Publish (dry run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
         run: npm publish --dry-run --provenance --access public
+        env:
+          # Empty when no secret is set, which is fine: with a Trusted Publisher
+          # configured, npm authenticates over OIDC instead.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+        # --provenance is implied by trusted publishing but harmless to state.
         run: npm publish --provenance --access public
         env:
+          # Two supported paths:
+          #  1. Trusted Publisher configured on npmjs.com for this package —
+          #     leave NPM_TOKEN unset and npm uses the OIDC token that
+          #     `id-token: write` provides. Nothing long-lived to rotate.
+          #  2. No Trusted Publisher — set an NPM_TOKEN secret (automation type).
+          # Note: linking an npm ACCOUNT to GitHub is not the same thing as
+          # configuring a Trusted Publisher; the latter is per-package.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
