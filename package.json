@@ -1,0 +1,56 @@
+{
+  "name": "tool-compression",
+  "version": "0.1.0",
+  "description": "Shrink LLM tool definitions without making the model dumber. Measured 82% fewer prompt tokens at equal accuracy.",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "vitest run --exclude '**/integration/**'",
+    "brain": "tsx --disable-warning=ExperimentalWarning brain/brain.ts",
+    "bench": "tsx bench/harness/run.ts",
+    "build": "tsc",
+    "prepublishOnly": "npm run build && npm test",
+    "test:live": "vitest run tests/integration"
+  },
+  "keywords": [
+    "llm",
+    "mcp",
+    "tools",
+    "anthropic",
+    "claude",
+    "openai",
+    "tokens",
+    "context-window"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    }
+  }
+}

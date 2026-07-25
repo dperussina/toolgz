@@ -141,3 +141,19 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ── toolgz-specific ───────────────────────────────────────────────
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.swp
+brain.db
+brain.db-*
+# bench/results/*.jsonl is deliberately NOT ignored: README and docs/RESULTS.md
+# cite it as the evidence for the published numbers, so it ships with the repo.
+bench/results/*.log
+bench/dbg.ts
+bench/sizes.ts
+bench/rec-demo.ts
