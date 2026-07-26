@@ -32,6 +32,7 @@ import {
   terseDescriptor,
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
+import { nearest } from "./runtime/similar.js";
 
 export * from "./types.js";
 export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/index.js";
@@ -124,6 +125,40 @@ export function compress(
       });
     }
   }
+
+  /**
+   * Separator-insensitive lookup for level-3 map keys.
+   *
+   * Observed on gpt-5.6-sol against real MCP tools: the model reassembled a
+   * namespaced name with a DOT where the real tool uses an underscore —
+   * `gdrive.sheets_append_rows`, `coding.task_result`, `reverse.geocode`. Joining a
+   * namespace and an operation with `.` is the ordinary convention for qualified
+   * identifiers, so the inference is reasonable and ours was simply too strict.
+   * Rejecting it burned six turns per task.
+   *
+   * Keys are therefore compared with every separator stripped, which accepts `.`,
+   * `:`, `/`, `-`, a space, or nothing. Registered ONLY where the normalised form
+   * is unambiguous: if two tools normalise alike neither is aliased and the exact
+   * name is required, so this can never silently dispatch the wrong tool.
+   */
+  const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normIndex = new Map<string, NormalizedTool | null>();
+  const registerNorm = (key: string, t: NormalizedTool) => {
+    const k = normKey(key);
+    if (!k) return;
+    const seen = normIndex.get(k);
+    if (seen === undefined) normIndex.set(k, t);          // first claim
+    else if (seen && seen.name !== t.name) normIndex.set(k, null); // ambiguous
+  };
+  if (level === 3) {
+    for (const t of tools) registerNorm(t.name, t);
+    for (const [code, t] of codeToTool) registerNorm(code, t);
+  }
+  /** Exact map key first, then the separator-insensitive fallback. */
+  const lookupMapKey = (raw: unknown): NormalizedTool | undefined => {
+    const key = String(raw ?? "");
+    return codeToTool.get(key) ?? normIndex.get(normKey(key)) ?? undefined;
+  };
 
   const finish = (
     wire: unknown[],
@@ -341,11 +376,29 @@ export function compress(
     wire,
     systemPreamble,
     true,
-    (name, rawArgs) => {
-      const args = asObject(rawArgs);
+    (rawName, rawArgs) => {
+      let name = rawName;
+      let args = asObject(rawArgs);
+
+      // Observed on grok-4.5, on every level-3 map style: the model routes the
+      // lookup tool through the dispatcher — t(f="q", a={s:"…"}) instead of
+      // q(s="…"). The preamble invites it, saying "Invoke with t(f=<code>, a={…})"
+      // and then "Use q to expand a code", which reads as everything going through
+      // t. Tasks still completed, so this surfaced as wasted turns rather than as
+      // failure. `t` and `q` are our own reserved names, so the intent is
+      // unambiguous — nothing else could be meant.
+      if (name === "t" && (args.f === "q" || args.f === "t")) {
+        const nested = asObject(args.a);
+        const flat = Object.fromEntries(
+          Object.entries(args).filter(([k]) => k !== "f" && k !== "a"),
+        );
+        name = String(args.f);
+        args = Object.keys(nested).length ? nested : flat;
+      }
+
       if (name === "q") {
         if (args.c !== undefined) {
-          const t = codeToTool.get(String(args.c));
+          const t = lookupMapKey(args.c);
           if (!t) return err(`No map code "${args.c}". Search with q(s=…).`);
           return {
             kind: "meta",
@@ -372,13 +425,20 @@ export function compress(
       // claude-opus-5: name="b5", args={f:"b5", a:"{…}"}. Codes are unique and
       // cannot collide with `t` or `q`, so this form is unambiguous and
       // accepting it removes a whole class of wasted turn.
-      const viaCode = name !== "t" && name !== "q" ? codeToTool.get(name) : undefined;
+      const viaCode = name !== "t" && name !== "q" ? lookupMapKey(name) : undefined;
       if (!viaCode && name !== "t") {
         return err(`No tool named "${name}". Invoke tools with t(f=<code>).`);
       }
 
-      const t = viaCode ?? codeToTool.get(String(args.f));
-      if (!t) return err(`No map code "${args.f}". Search with q(s=…).`);
+      const t = viaCode ?? lookupMapKey(args.f);
+      if (!t) {
+        // A near miss is the common case, and a bare rejection costs another turn.
+        const guess = nearest(String(args.f ?? ""), [...codeToTool.keys()]);
+        return err(
+          `No map code "${args.f}". Search with q(s=…).` +
+            (guess ? ` Did you mean "${guess}"? Use it exactly as written in <toolmap>.` : ""),
+        );
+      }
 
       // Args may arrive nested under `a`, or flat alongside `f`. Prefer `a`
       // when present rather than merging, so there is one source of truth.

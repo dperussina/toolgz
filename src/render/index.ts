@@ -130,7 +130,22 @@ export function normalize(
     if (!t?.name) throw new Error("tool is missing a name");
     if (seen.has(t.name)) throw new Error(`duplicate tool name: ${t.name}`);
     seen.add(t.name);
-    const { ns, op } = namespaceOf(t.name);
+    // Validate the callback's return rather than trusting it. The contract is
+    // easy to get wrong — it takes a name and returns {ns, op}, not a bare
+    // namespace string — and the failure was silent and remote: every tool
+    // collapsed into one `undefined` namespace, level 2 emitted a wire tool with
+    // an empty name, and the first symptom was the provider rejecting the request
+    // with "tools.0.custom.name: Field required", nowhere near the cause.
+    const parts = namespaceOf(t.name);
+    const ns = parts?.ns;
+    const op = parts?.op;
+    if (typeof ns !== "string" || !ns || typeof op !== "string" || !op) {
+      throw new Error(
+        `namespaceOf("${t.name}") must return { ns, op } with non-empty strings, ` +
+          `got ${JSON.stringify(parts)}. ` +
+          `Example: (name) => ({ ns: serverOf(name), op: name }).`,
+      );
+    }
     return {
       name: t.name,
       description: t.description ?? "",
