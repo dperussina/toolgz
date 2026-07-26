@@ -15,6 +15,17 @@ zero runtime dependencies ·
 npm install toolgz
 ```
 
+> ### 🤖 If a coding agent is reading this
+>
+> Point it at **[`llms.txt`](llms.txt)** — prescriptive integration instructions written
+> for an agent, shipped inside the package at `node_modules/toolgz/llms.txt`. It covers
+> the three-step contract, the rules that are not optional, per-model behaviour, and a
+> `Do not` list of the mistakes we have actually fielded.
+>
+> ```
+> Read node_modules/toolgz/llms.txt before integrating toolgz.
+> ```
+
 ---
 
 ## The problem
@@ -420,6 +431,10 @@ than a bug report from you.
 ```bash
 npx tsx examples/01-minimal.ts
 ```
+
+**[`examples/README.md`](examples/README.md) walks through all five** with their real
+output and what each one is trying to teach — start there if you would rather read than
+run.
 
 | File | Shows |
 |---|---|

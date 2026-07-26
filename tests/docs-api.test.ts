@@ -20,7 +20,11 @@ const VALID_STYLES = ["name+required", "explicit", "signature"];
 const DOCS = [
   "README.md",
   "AGENTS.md",
+  // Shipped in the npm tarball and written for a consumer's coding agent, so a stale
+  // identifier here gets acted on rather than merely read.
+  "llms.txt",
   ...readdirSync("docs").filter((f) => f.endsWith(".md") || f.endsWith(".txt")).map((f) => `docs/${f}`),
+  ...readdirSync("examples").filter((f) => f.endsWith(".md")).map((f) => `examples/${f}`),
   ...readdirSync("specs", { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .flatMap((d) =>

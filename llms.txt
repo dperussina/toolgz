@@ -1,0 +1,205 @@
+# toolgz
+
+> Compresses LLM tool definitions to reclaim context window. Zero runtime dependencies,
+> TypeScript, Apache-2.0. Works with any model and any framework: it transforms a tool
+> array before you send it, and translates the model's call back afterwards.
+
+**This file is written for a coding agent integrating toolgz into a project.** It is
+prescriptive on purpose. If you are contributing to toolgz itself, read `AGENTS.md` in the
+repository instead — different audience, different rules.
+
+Installed copy lives at `node_modules/toolgz/llms.txt`. Full prose docs: `README.md`.
+
+---
+
+## The whole integration, correctly
+
+```ts
+import { compress, recommendLevel, forAnthropic } from "toolgz";
+
+// 1. Decide the level ONCE, at startup — not per request.
+const { level } = recommendLevel(myTools);
+const c = compress(myTools, { level });
+
+// 2. Send c.tools instead of your tool array, and append the preamble to your system prompt.
+const { tools, system } = forAnthropic(c);
+
+// 3. Translate every tool call back before you dispatch.
+for (const block of res.content.filter((b) => b.type === "tool_use")) {
+  const r = c.resolve(block.name, block.input);
+  if (r.kind === "call") {
+    const out = await myDispatch(r.name, r.args);      // real name, real args
+    results.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(out) });
+  } else if (r.kind === "meta") {
+    // toolgz answered a lookup itself. DO NOT dispatch. Return its text to the model.
+    results.push({ type: "tool_result", tool_use_id: block.id, content: r.result });
+  } else {
+    // Recoverable by design: hand the message back and the model retries.
+    results.push({ type: "tool_result", tool_use_id: block.id, content: `Error: ${r.message}`, is_error: true });
+  }
+}
+```
+
+Those three steps are the entire contract. `myDispatch` receives exactly what it received
+before toolgz existed.
+
+## Rules that are not optional
+
+1. **`resolve()` every tool call.** At level 3 the model emits opaque codes (`t(f="a0")`),
+   so dispatching `block.name` directly will fail or dispatch the wrong tool. Route
+   everything through `resolve()` even at level 0, so the level becomes a one-line change.
+
+2. **Handle all three `kind` values.** `call` → dispatch. `meta` → toolgz already answered
+   a lookup; return `r.result` to the model and dispatch nothing. `error` → return
+   `r.message` to the model as an error tool_result; do **not** throw. The `error` path is
+   the recovery mechanism, not a failure.
+
+3. **Send the system preamble.** At level 3 the tool map lives in the system prompt. Drop
+   it and the model has no idea what any code means. It is `""` at levels 0–1, so
+   appending it unconditionally is always safe.
+
+4. **`compress()` never changes level on its own.** `compress(tools)` is level 1 forever,
+   2 tools or 500. `recommendLevel()` *advises*; you pass its answer in as `{ level }`.
+   Deliberate: level 3 moves argument validation from the provider to toolgz, which is not
+   a change to make behind a caller's back.
+
+5. **Leave `validate` on** (the default). Levels 2–3 give up the provider's constrained
+   decoding, so toolgz validating against the original schema is what catches malformed
+   arguments. On a weak model, disabling it converts roughly half of all runs from a
+   recovered retry into a bad dispatch.
+
+6. **Compress once, reuse the result.** `compress()` is deterministic — same tools in,
+   byte-identical payload out — so the output is prompt-cache friendly. Recomputing per
+   request is wasted work; changing the tool list mid-conversation invalidates the cache
+   and strands codes the model has already seen.
+
+## Choosing a level
+
+Ask, don't guess: `recommendLevel(myTools)` returns `{ level, reason }` — 1 or 3, never 2.
+
+| Level | Wire | Names | Provider schema enforcement | When |
+|:-:|---|:-:|:-:|---|
+| 0 | unchanged | real | yes | A/B control only |
+| **1** | one native tool each, flattened schemas | real | **yes** | **default.** Reclaims 13–39%, gives up nothing |
+| 2 | one tool per namespace | real | no | only if you need real op names on the wire |
+| **3** | one dispatcher + one lookup | codes | no | **large tool sets.** Up to ~85–96% |
+
+The switch is the **size** of the level-1 block, not the tool count — threshold 10,000
+tokens (~5% of a 200k window). A tool is 20 to 460 tokens depending on schema verbosity,
+so 40 real MCP tools cross it while 72 one-parameter tools do not.
+
+Level 2 is dominated by level 3 on accuracy (six times the malformed arguments) and is
+never recommended. It stays in the API for callers who need real operation names.
+
+## Provider adapters — pick the right one
+
+```ts
+forAnthropic(c, { cache?, ttl? })  // → { tools, system }        Messages API
+forOpenAI(c)                       // → { tools, systemPreamble } /v1/chat/completions
+forOpenAIResponses(c)              // → { tools, systemPreamble } /v1/responses
+forGemini(c)                       // → { tools, systemPreamble } generateContent
+```
+
+Two mistakes that produce confusing provider errors:
+
+- **OpenAI has two incompatible tool shapes.** `/v1/chat/completions` wants nested
+  `{type, function:{…}}`; `/v1/responses` wants flat `{type, name, …}`. If you set
+  reasoning effort on a GPT-5.x model you must use `/v1/responses`, therefore
+  `forOpenAIResponses`. Using the wrong adapter is rejected at the API.
+- **Gemini returns ONE wrapper object,** not one entry per tool. Read
+  `tools[0].functionDeclarations.length`; `tools.length` is always 1.
+
+`forGemini` also repairs three schema forms Gemini rejects with a 400: an array-valued
+`type`, `type: "array"` with no `items`, and a non-string `enum`. Constraints stripped to
+satisfy Gemini are still enforced by `resolve()` against your original schema — nothing is
+silently dropped.
+
+xAI is OpenAI-compatible: use `forOpenAI` with `baseURL: "https://api.x.ai/v1"`. **xAI
+caps tool arrays at 350**; other providers accept 1,200+. Level 3 sends 2 either way.
+
+## Model-specific behaviour
+
+Pass an exact model id and toolgz uses the best *measured* map style for it:
+
+```ts
+compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
+```
+
+| Model | `objective: "cost"` | Measured vs default |
+|---|---|---:|
+| `gpt-5.6-sol` | `explicit` | −20.7% |
+| `gemini-3.1-pro-preview` | `explicit` | −15.4% |
+| `claude-opus-5` | `explicit` | −9.0% |
+| `grok-4.5` | *(no entry)* | `explicit` is **+13.2%** there |
+
+- Model ids are **exact, never families**. A result for `gpt-5.6-sol` says nothing about
+  `gpt-5.7`. An unknown model gets the conservative default — absence of evidence, not a
+  prediction.
+- The default objective is `occupancy`, which has **no** entries: nothing beat the default
+  by more than 3.1% on that axis, under the 5% effect-size floor. Only `cost` has rows.
+- This is the one thing the library picks for you, and only when you pass `model`. A map
+  style is a pure encoding choice, so a better one cannot change results. The *level*
+  can — which is why that stays explicit.
+- Do not set `mapStyle` by hand unless you have measured your own workload. Prefer
+  `model` + `objective`.
+
+## MCP servers
+
+`tools/list` returns `{ name, description, inputSchema }` per tool — exactly what
+`compress()` accepts. **There is no adapter layer.** Merge the arrays from every server
+and pass them in.
+
+`input_schema` and `inputSchema` are both accepted, so Anthropic-shaped and MCP-shaped
+tools can be mixed.
+
+Watch for name collisions when merging catalogues from independent servers. If two tool
+names normalise identically, toolgz refuses to alias either one rather than guess — the
+map code still works.
+
+## API surface
+
+```ts
+compress(tools, options?) → CompressResult
+recommendLevel(tools, namespaceOf?) → { level, reason, toolCount, namespaceCount, opsPerNamespace }
+selectMapStyle(options) → { mapStyle, requestedMapStyle?, fallbackReason? }   // pure
+```
+
+`CompressOptions`: `level`, `mapStyle`, `namespaceOf`, `aliasOf`, `searchLimit`,
+`validate`, `model`, `objective`.
+
+`CompressResult`: `tools`, `systemPreamble`, `cachePreamble`, `resolve()`, `codeFor()`,
+`encodeCallForTest()`, `stats`.
+
+`stats`: `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`,
+`wireToolCount`, `originalChars`, `compressedChars`, `savedPct`.
+
+`namespaceOf` must return `{ ns, op }`, **not** a bare string. Returning a string throws
+with a corrected example — it used to fail silently and produce a plausible-looking but
+wrong map.
+
+## Things to tell the user, not assume
+
+- **`savedPct` is a CHARACTER saving**, a few points optimistic against tokens. Providers
+  charge a fixed framing cost per tool definition that character counting cannot see. For
+  any published figure, measure with the provider's own token counter.
+- **Never use `tiktoken` to count Claude tokens** — it is OpenAI's tokenizer and is wrong
+  for Claude by 15–20%+. Use Anthropic's `count_tokens`.
+- **Token saving ≠ cost saving.** Prompt caching already makes tool tokens cheap; the claim
+  here is context-window *occupancy*. Cost follows by a variable amount, and on OpenAI —
+  where reasoning output dominates the bill — it was as little as 7%.
+- **Level 3 costs turns.** Roughly 0.3–1.7 lookup calls per task, about half an extra turn.
+  If latency matters more than context, stay at level 1.
+- **Below the frontier tier, argument formatting degrades at level 3.** On Haiku 4.5, 17 of
+  30 runs produced a malformed argument — all caught by `validate` and recovered, no task
+  lost, but that is the known edge. Tool *choice* did not degrade.
+
+## Do not
+
+- Do not dispatch `block.name` without `resolve()`.
+- Do not throw on `kind: "error"` — return it to the model.
+- Do not dispatch on `kind: "meta"`.
+- Do not omit `systemPreamble` at level 3.
+- Do not set `validate: false` to silence a malformed-argument error; fix the schema.
+- Do not call `compress()` inside the request loop.
+- Do not report `savedPct` as a token or cost saving.
+- Do not assume a level was chosen for you.

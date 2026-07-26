@@ -12,7 +12,7 @@
  * runtime dependency must be one `src/` actually imports.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -82,8 +82,34 @@ describe("published package weight", () => {
 });
 
 describe("published file list", () => {
-  it("ships only build output and legal/readme files", () => {
-    expect(pkg.files).toEqual(["dist", "README.md", "LICENSE", "NOTICE"]);
+  it("ships only build output, docs for humans and agents, and legal files", () => {
+    expect(pkg.files).toEqual(["dist", "README.md", "llms.txt", "LICENSE", "NOTICE"]);
+  });
+
+  it("ships llms.txt, because an agent cannot read a file that was not published", () => {
+    // The integration instructions for a consumer's coding agent are only useful if
+    // they land in node_modules. This is the whole point of the file, so it is asserted
+    // rather than trusted to the `files` array staying correct.
+    expect(pkg.files).toContain("llms.txt");
+    expect(existsSync("llms.txt"), "llms.txt is listed in files but does not exist").toBe(true);
+  });
+
+  it("llms.txt states the rules an agent most often gets wrong", () => {
+    // Not a style check: each of these is a defect we have actually seen or fielded.
+    // If the file is rewritten, these must survive the rewrite.
+    const llms = readFileSync("llms.txt", "utf8");
+    for (const rule of [
+      "resolve",             // dispatching block.name directly breaks at level 3
+      "systemPreamble",      // level 3 without the map is unusable
+      "never changes level",  // compress() does not self-upgrade
+      "validate",            // turning it off converts retries into bad dispatches
+      "forOpenAIResponses",  // wrong adapter + reasoning is rejected at the API
+      "functionDeclarations", // Gemini returns one wrapper, not one tool per tool
+      "tiktoken",            // wrong for Claude by 15-20%
+      "CHARACTER saving",    // savedPct is not a token or cost saving
+    ]) {
+      expect(llms, `llms.txt no longer mentions ${rule}`).toContain(rule);
+    }
   });
 
   it("does not ship source, tests, benchmarks or env samples", () => {
