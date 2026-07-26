@@ -668,7 +668,7 @@ compress(all, {
 **The model calls `t` or `q` and my dispatcher explodes.**
 You're dispatching on every tool call. Only `kind === "call"` is real; `meta`
 and `error` are toolgz's own tools and must be answered, not dispatched. See
-[§5](#5-handling-the-three-outcomes).
+[§2](#2-handling-the-three-outcomes).
 
 **`resolve()` returns `error: unknown parameter "x"`.**
 The model invented a parameter. Feed `r.message` back as an error tool result —
@@ -689,7 +689,7 @@ wrong-case enum value shows the exact accepted spelling. Feed them straight back
 and the retry usually lands first time.
 
 **`cache_read_input_tokens` is always 0.**
-Something in your prefix varies per request. See [§7](#7-prompt-caching).
+Something in your prefix varies per request. See [§4](#4-prompt-caching).
 
 **Gemini rejects my schema.**
 Use `forGemini`, which strips the keywords Gemini won't accept. If a new one
@@ -760,12 +760,14 @@ number can be recomputed rather than trusted.
 
 | Option | Type | Default | Notes |
 |---|---|---|---|
-| `level` | `0 \| 1 \| 2 \| 3` | `1` | see [§3](#3-which-level-should-i-use) |
+| `level` | `0 \| 1 \| 2 \| 3` | `1` | see [Which level to use](#which-level-to-use) |
 | `mapStyle` | `"name+required" \| "explicit" \| "signature"` | `"name+required"` | level 3 only |
 | `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–3 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
 | `validate` | `boolean` | `true` | **leave this on** |
+| `model` | `string` | — | exact model id; picks the measured style. Omit and nothing changes |
+| `objective` | `"occupancy" \| "cost"` | `"occupancy"` | what the pick optimises. Only `cost` has entries |
 
 Returns:
 
@@ -776,7 +778,8 @@ Returns:
 | `cachePreamble` | `boolean` | whether the preamble should sit behind a breakpoint |
 | `resolve(name, args)` | `→ Resolution` | translate a model call back |
 | `codeFor(name)` | `→ string` | real name → level-3 code; throws below level 3 |
-| `stats` | `CompressStats` | `level`, `toolCount`, `wireToolCount`, `savedPct`, … |
+| `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct` |
+| `encodeCallForTest(name, args)` | `→ {name, args}` | build the raw call a model would emit; test aid |
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
 
@@ -790,6 +793,11 @@ Returns:
 | `forOpenAI(c)` → `{ tools, systemPreamble }` | `/v1/chat/completions` | nested `{type, function:{…}}` |
 | `forOpenAIResponses(c)` → `{ tools, systemPreamble }` | `/v1/responses` | **flat** `{type, name, …}` — required for tools + reasoning |
 | `forGemini(c)` → `{ tools, systemPreamble }` | `generateContent` | one `functionDeclarations` array |
+
+Also exported: `recommendLevel(tools)` → `{ level, reason }`; `selectMapStyle(options)`
+→ `{ mapStyle, requestedMapStyle?, fallbackReason? }` (pure, so you can see a pick
+without compressing); and `POLICY`, `BROKEN`, `CONSERVATIVE_DEFAULT` — the measured
+table, so a style choice is never a black box.
 
 ### Renderers (exported for tooling)
 
@@ -851,7 +859,7 @@ and it does not get deleted.
 ## Development
 
 ```bash
-npm test        # 245 tests, offline, no cost
+npm test        # 249 tests, offline, no cost
 npm run build   # tsc → dist/ with .d.ts
 
 npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money

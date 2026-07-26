@@ -44,11 +44,16 @@ function parseReadme(): Row[] {
   for (const line of md.split("\n")) {
     if (!line.startsWith("|")) continue;
     const cells = line.split("|").slice(1, -1).map(plain);
-    if (cells.length < 7) continue;
-    // Prompt-token cell looks like: 30,817 → 4,628 (−85%)
-    const m = cells[3].match(/([\d,]+)\s*→\s*([\d,]+)\s*\(−([\d.]+)%\)/);
-    // Latency cell looks like: 15.0s → 12.1s
-    const l = cells[5].match(/([\d.]+)s\s*→\s*([\d.]+)s/);
+    // Not a fixed column count: the table has changed shape once already. A row
+    // qualifies if it contains the two cells we need, which is the real requirement.
+    if (cells.length < 4) continue;
+    // Locate cells by CONTENT, not by index. This used to read cells[3] and cells[5],
+    // and silently broke the moment the table dropped its Cost column — a documentation
+    // generator that depends on column order is a generator that breaks on every edit.
+    const m = cells
+      .map((c) => c.match(/([\d,]+)\s*→\s*([\d,]+)\s*\(−([\d.]+)%\)/))
+      .find(Boolean);
+    const l = cells.map((c) => c.match(/([\d.]+)s\s*→\s*([\d.]+)s/)).find(Boolean);
     if (!m || !l) continue;
     rows.push({
       provider: cells[0],
@@ -154,10 +159,10 @@ function card(rows: Row[], t: Theme): string {
   <rect x="${pillX}" y="57" width="${pillW}" height="34" rx="17" fill="none" stroke="${t.accent}" stroke-width="1.5"/>
   <text x="${pillX + pillW / 2}" y="79" text-anchor="middle" font-family="${MONO}" font-size="15" fill="${t.accent}">npm install toolgz</text>
 
-  <text x="${PAD}" y="152" font-family="${FONT}" font-size="38" font-weight="700" fill="${t.ink}">Your agent burns 30,000 tokens on tool</text>
+  <text x="${PAD}" y="152" font-family="${FONT}" font-size="38" font-weight="700" fill="${t.ink}">Your agent burns 30–70k tokens on tool</text>
   <text x="${PAD}" y="196" font-family="${FONT}" font-size="38" font-weight="700" fill="${t.ink}">definitions before the user says a word.</text>
 
-  <text x="${PAD}" y="234" font-family="${FONT}" font-size="16" fill="${t.secondary}">toolgz gives back <tspan fill="${t.accent}" font-weight="700">${range}</tspan> of it — and runs faster. Your code still sees the same tool names and arguments.</text>
+  <text x="${PAD}" y="234" font-family="${FONT}" font-size="16" fill="${t.secondary}">toolgz gives back <tspan fill="${t.accent}" font-weight="700">${range}</tspan> of it at level 3 — and runs faster. Your code still sees the same tool names and arguments.</text>
 
   <line x1="${PAD}" y1="262" x2="${rightEdge}" y2="262" stroke="${t.track}" stroke-width="1"/>
   <text x="${PAD}" y="283" font-family="${FONT}" font-size="11" letter-spacing="1.2" fill="${t.muted}">PROMPT TOKENS PER REQUEST — UNCOMPRESSED → toolgz</text>
@@ -166,7 +171,7 @@ ${bars}
 
   <line x1="${PAD}" y1="558" x2="${rightEdge}" y2="558" stroke="${t.track}" stroke-width="1"/>
   <text x="${PAD}" y="583" font-family="${FONT}" font-size="14" font-weight="600" fill="${t.ink}">60/60 tasks completed · 0 hallucinated tool names · 0 malformed arguments</text>
-  <text x="${PAD}" y="603" font-family="${FONT}" font-size="12" fill="${t.muted}">${esc(rows.map((r) => r.model).join(" · "))} · reasoning at high effort</text>
+  <text x="${PAD}" y="603" font-family="${FONT}" font-size="12" fill="${t.muted}">${esc(rows.map((r) => r.model).join(" · "))} · reasoning at high effort · level 1 (the default) saves 13–32%</text>
   <text x="${rightEdge}" y="583" text-anchor="end" font-family="${MONO}" font-size="13" fill="${t.secondary}">github.com/dperussina/toolgz</text>
   <text x="${rightEdge}" y="603" text-anchor="end" font-family="${FONT}" font-size="12" fill="${t.muted}">Apache-2.0 · zero runtime dependencies</text>
 </svg>`;

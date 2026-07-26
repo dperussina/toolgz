@@ -124,3 +124,40 @@ describe("every documented style actually works when called", () => {
     expect(read("README.md")).toMatch(/table is currently\s*\n?\s*empty|currently\s+\*\*empty\*\*/i);
   });
 });
+
+describe("the API reference documents the whole surface", () => {
+  /**
+   * The reference had drifted twice: it omitted `model` and `objective` after they were
+   * added, and listed a four-field `stats` that had grown to nine. A reference table
+   * that a human keeps in sync is a table that goes stale, so this derives the expected
+   * set from the types.
+   */
+  const types = readFileSync("src/types.ts", "utf8");
+  const readme = read("README.md");
+  const keysOf = (name: string) => {
+    const m = types.match(new RegExp(`export type ${name} = \\\\{([\\\\s\\\\S]*?)\\\\n\\\\};`));
+    return [...(m?.[1] ?? "").matchAll(/^ {2}(\w+)\??[:(]/gm)].map((x) => x[1]);
+  };
+
+  it("documents every CompressOptions field", () => {
+    const missing = keysOf("CompressOptions").filter((k) => !readme.includes(`\`${k}\``));
+    expect(missing, `undocumented options: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("documents every CompressResult member", () => {
+    const missing = keysOf("CompressResult").filter((k) => !readme.includes(`\`${k}`));
+    expect(missing, `undocumented result members: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("documents every CompressStats field", () => {
+    const missing = keysOf("CompressStats").filter((k) => !readme.includes(`\`${k}\``));
+    expect(missing, `undocumented stats fields: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("documents every function the package exports", async () => {
+    const mod: Record<string, unknown> = await import("../src/index.js");
+    const fns = Object.keys(mod).filter((k) => typeof (mod as any)[k] === "function");
+    const missing = fns.filter((f) => !readme.includes(f));
+    expect(missing, `exported but undocumented: ${missing.join(", ")}`).toEqual([]);
+  });
+});
