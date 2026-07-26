@@ -105,15 +105,40 @@ type Row = {
   costUsd: number;
 };
 
+/**
+ * The published charts pin to ONE sweep, and the default is the sweep the README's
+ * results table cites.
+ *
+ * This used to load every file in bench/results and average across them. That silently
+ * blended library versions, scenario mixes and two different suites: after the
+ * real-MCP suite landed it reported Anthropic's shipped default at 70% saving where
+ * the README table says 85%, so the charts and the table beside them disagreed while
+ * both claimed to come from the same data. Pooling sweeps is the same error as
+ * averaging cost across providers, and bench/analyze-multi.ts already refuses it.
+ *
+ * Override with --sweep=<timestamp-prefix> to chart a different run.
+ */
+const DEFAULT_SWEEP = "2026-07-25T19-19";
+
 function load(): Row[] {
+  const want =
+    process.argv.find((a) => a.startsWith("--sweep="))?.split("=")[1] ?? DEFAULT_SWEEP;
   const rows: Row[] = [];
-  for (const f of readdirSync(RESULTS).filter(
-    (f) => f.startsWith("multi-") && f.endsWith(".jsonl"),
-  )) {
+  const files = readdirSync(RESULTS).filter(
+    (f) => f.startsWith("multi-") && f.endsWith(".jsonl") && f.includes(want),
+  );
+  if (!files.length) {
+    throw new Error(
+      `no results for sweep "${want}" in ${RESULTS}. ` +
+        `Charts must pin to one sweep — pooling blends library versions and suites.`,
+    );
+  }
+  for (const f of files) {
     for (const l of readFileSync(RESULTS + f, "utf8").split("\n")) {
       if (l.trim()) rows.push(JSON.parse(l));
     }
   }
+  console.log(`charting sweep ${want} — ${rows.length} runs from ${files.length} files`);
   return rows;
 }
 

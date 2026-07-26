@@ -85,14 +85,15 @@ compress(tools)                                                        // unchan
 
 ## Candidate table from measured data
 
-Indicative only — the shipped table is generated, never hand-written.
-
-| Provider | `occupancy` | `cost` |
-|---|---|---|
-| `gemini-3.1-pro-preview` | `nocode` (−15.2%) | **`explicit`** (−39%) |
-| `gpt-5.6-sol` | `nocode` (−15.5%) | **`explicit`** (−16%) |
-| `claude-opus-5` | `nocode` (−11.6%) | `name+required` |
-| `grok-4.5` | `nocode` (−12.2%) | `name+required` |
+> **Superseded.** The figures in this section came from tier 1 and tier 2 (n=4 to
+> n=12). Tier 3 (n=36 per arm per provider) revised them substantially — Gemini's
+> `explicit` cost win went from −39% to −15.4%, and `nocode` was disqualified
+> outright. See **Outcome** at the end of this document for the shipped table, and
+> `src/policy.generated.ts` for the authoritative version.
+>
+> Kept rather than deleted because the size of the revision is itself the lesson:
+> small-n effect sizes on this suite are unreliable, which is where the 5% floor and
+> the tier ladder came from.
 
 ## The fallback must be observable
 
