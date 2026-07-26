@@ -859,7 +859,7 @@ and it does not get deleted.
 ## Development
 
 ```bash
-npm test        # 251 tests, offline, no cost
+npm test        # 252 tests, offline, no cost
 npm run build   # tsc → dist/ with .d.ts
 
 npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money

@@ -31,28 +31,38 @@ const DOCS = [
 ];
 const read = (f: string) => readFileSync(f, "utf8");
 
-/** A line is exempt if it is explicitly marked as historical. */
-const isHistorical = (line: string) =>
-  /removed in 0\.2\.0|before 0\.2\.0|were removed|no longer/i.test(line);
+/**
+ * A mention is exempt if it or its immediate context is marked historical.
+ *
+ * Line-scoped matching was not enough: RESULTS.md explains the removals across two
+ * lines, with "removed in 0.2.0" on the first and the style name on the second, and the
+ * guard flagged the explanation of the very thing it checks for.
+ */
+const isHistorical = (lines: string[], i: number) =>
+  lines
+    .slice(Math.max(0, i - 2), i + 2)
+    .some((l) => /removed in 0\.2\.0|before 0\.2\.0|were removed|no longer|superseded|historical record|disqualif/i.test(l));
 
 describe("documented map styles all exist", () => {
   for (const file of DOCS) {
     it(`${file} names only real styles`, () => {
       const offenders: string[] = [];
-      for (const line of read(file).split("\n")) {
-        if (isHistorical(line)) continue;
+      const lines = read(file).split("\n");
+      lines.forEach((line, i) => {
+        if (isHistorical(lines, i)) return;
         for (const m of line.matchAll(/mapStyle:\s*"([^"]+)"/g)) {
           if (!VALID_STYLES.includes(m[1])) offenders.push(`${m[1]} — ${line.trim().slice(0, 80)}`);
         }
-      }
+      });
       expect(offenders, `remove or mark historical:\n  ${offenders.join("\n  ")}`).toEqual([]);
     });
   }
 
   it("no doc mentions the cheatSheet option, which no longer exists", () => {
     for (const file of DOCS) {
-      if (isHistorical(read(file))) continue;
-      expect(read(file).includes("cheatSheet"), file).toBe(false);
+      const lines = read(file).split("\n");
+      const live = lines.filter((l, i) => l.includes("cheatSheet") && !isHistorical(lines, i));
+      expect(live, `${file} still documents cheatSheet: ${live.join(" | ")}`).toEqual([]);
     }
   });
 });
@@ -196,5 +206,22 @@ describe("documented imports name real exports", () => {
       }
     }
     expect(offenders, `docs call missing members:\n  ${offenders.join("\n  ")}`).toEqual([]);
+  });
+});
+
+describe("RESULTS.md run total matches the committed data", () => {
+  /**
+   * The header claimed "~2,900 runs" because I estimated it. The real figure is 3,203.
+   * A total nobody recomputes is a total that drifts, and this one is the headline
+   * credibility claim of the whole document.
+   */
+  it("states the real number of committed runs", () => {
+    let actual = 0;
+    for (const f of readdirSync("bench/results").filter((f) => f.endsWith(".jsonl"))) {
+      actual += readFileSync(`bench/results/${f}`, "utf8").split("\n").filter((l) => l.trim()).length;
+    }
+    const claimed = read("docs/RESULTS.md").match(/\*\*Total\*\*:\s*([\d,]+)\s*runs/);
+    expect(claimed, "RESULTS.md must state a run total").toBeTruthy();
+    expect(Number(claimed![1].replace(/,/g, ""))).toBe(actual);
   });
 });

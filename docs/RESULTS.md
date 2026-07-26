@@ -4,9 +4,15 @@
 **Round 4** — cross-provider: `claude-opus-5`, `gpt-5.6-sol`, `gemini-3.1-pro-preview`, `grok-4.5`
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
 **Round 5** — same four providers, after hardening the resolver from observed failures
-**Total**: 1,212 runs across rounds 1–5 · ~$32 · 2026-07-25
+**Round 6** — real MCP tools: 149 tools from 14 live servers, replacing the synthetic fixture
+**Total**: 3,203 runs across rounds 1–6, in 13 sweeps · 2026-07-25/26 (counted from the committed JSONL, not estimated)
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
-**Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze.ts` (rounds 1–3), `npx tsx bench/analyze-multi.ts` (round 4)
+**Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze-multi.ts --sweep=<timestamp>` — the `--sweep` flag is required, because pooling runs blends library versions
+
+> **Arm names in rounds 1–5 include map styles removed in 0.2.0** — `minified`
+> (`mapStyle: "name"`) and `minified-terse` among them. Those rows are the historical
+> record and are left intact; they are not a menu of current options. The three styles
+> the library still offers are `name+required`, `explicit` and `signature`.
 **Reproduce**: `npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants` *(costs money)*
 
 Round 1 measured token savings across five workload shapes. Round 2 existed
@@ -298,9 +304,17 @@ baseline and offered no explanation. Round 5 shows 4.6s, faster than
 uncompressed. Recording it rather than smoothing it over was right, and so was
 declining to explain it.
 
-**The default is now the best arm on every provider.** `name+required` has the
-smallest prompt on all four, a perfect task rate, and zero malformed arguments.
-Bare names remain the only style that has ever failed (14/15 on grok-4.5).
+**The default was the best arm on every provider in round 5.** `name+required` had the
+smallest prompt on all four, a perfect task rate, and zero malformed arguments. Bare
+names were the only style that had failed (14/15 on grok-4.5).
+
+> **Revised by round 6.** At tier 3 on real MCP tools (432 runs, 36 per arm per
+> provider), `explicit` was the only arm at 144/144 — the default lost one task on
+> grok-4.5 — and it cut median cost on three of four providers (−20.7% openai, −15.4%
+> gemini, −9.0% anthropic) while costing 13.2% more on grok-4.5. The default remains the
+> shipped default; `explicit` is selected per-model via `objective: "cost"`. And `nocode`
+> joined bare names on the list of styles that have failed, with a 19% silent failure
+> rate on grok-4.5.
 
 ### `signature`: better on OpenAI, worse on xAI
 
