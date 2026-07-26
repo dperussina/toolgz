@@ -126,12 +126,20 @@ describe("nocode", () => {
 describe("grouped", () => {
   const c = () => compress(TOOLS, { level: 3, mapStyle: "grouped" });
 
-  it("factors the namespace prefix out of each line", () => {
+  it("factors the namespace prefix out of a namespace with several tools", () => {
     const map = mapOf(c().systemPreamble);
     expect(map).toMatch(/^github: /m);
-    expect(map).toMatch(/^slack: /m);
     // The prefix must appear once per namespace, not once per tool.
     expect(map.split("github").length - 1).toBe(1);
+  });
+
+  it("leaves a single-tool namespace as a complete name", () => {
+    // `slack` has one tool here. `slack: post_message(...)` is longer than the
+    // real name, so factoring it would cost tokens and add a reconstruction step
+    // for nothing.
+    const map = mapOf(c().systemPreamble);
+    expect(map).not.toMatch(/^slack: /m);
+    expect(map).toContain("slack_post_message");
   });
 
   it("keeps required args per operation", () => {
@@ -296,5 +304,60 @@ describe("observed on gpt-5.6-sol: namespace joined with a dot, not an underscor
       a: { owner: "a", repo: "b", title: "c" },
     });
     expect(r.kind).toBe("call");
+  });
+});
+
+describe("grouped: a name with no separator must not become a degenerate group", () => {
+  /**
+   * Found on the real 149-tool corpus. `customers`, `fifo` and `intransit` contain
+   * no underscore, so defaultNamespaceOf sets ns === op === name. `grouped` then
+   * rendered `customers: customers()` while the legend promised a tool's full name
+   * is namespace_op — so a model following the documented rule builds
+   * `customers_customers`, which does not exist. All three tools were unreachable
+   * via the stated contract.
+   *
+   * A group of one is never worth factoring anyway: `customers: customers()` is
+   * longer than `customers`.
+   */
+  const SINGLE: Tool[] = [
+    { name: "fifo", description: "On-dock FIFO report.", inputSchema: { type: "object", properties: {} } },
+    { name: "customers", description: "Customer accounts.", inputSchema: { type: "object", properties: {} } },
+    { name: "github_create_issue", description: "Open an issue.", inputSchema: { type: "object", properties: { owner: { type: "string" } }, required: ["owner"] } },
+    { name: "github_search_issues", description: "Search issues.", inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } },
+  ];
+  const c = () => compress(SINGLE, { level: 3, mapStyle: "grouped" });
+
+  it("emits a separator-less name as a complete name, not `x: x()`", () => {
+    const map = mapOf(c().systemPreamble);
+    expect(map).not.toContain("fifo: fifo");
+    expect(map).not.toContain("customers: customers");
+    expect(map.split("\n")).toContain("fifo");
+  });
+
+  it("still resolves it by its real name", () => {
+    for (const n of ["fifo", "customers"]) {
+      const r = c().resolve("t", { f: n, a: {} });
+      expect(r.kind, n).toBe("call");
+      if (r.kind === "call") expect(r.name).toBe(n);
+    }
+  });
+
+  it("still groups a namespace that has more than one tool", () => {
+    expect(mapOf(c().systemPreamble)).toMatch(/^github: /m);
+  });
+
+  it("tells the model that a colonless line is already a full name", () => {
+    expect(c().systemPreamble).toContain("no colon is already a complete tool name");
+  });
+
+  it("every tool in the real corpus resolves by its real name", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const k = compress(REAL_TOOLS as any, { level: 3, mapStyle: "grouped" });
+    const unreachable = REAL_TOOLS.filter((t: any) => {
+      const r = k.resolve("t", { f: t.name, a: {} });
+      // A missing-required-argument error still means the tool was FOUND.
+      return r.kind === "error" && !/Missing required/.test(r.message);
+    });
+    expect(unreachable.map((t: any) => t.name)).toEqual([]);
   });
 });

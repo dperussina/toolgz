@@ -394,11 +394,23 @@ export function compress(
   // measured ~22% of the map's tokens.
   const groupedLines = (): string[] =>
     [...groups].map(([ns, list]) => {
+      const req = (t: NormalizedTool) => t.schema.required ?? [];
+      // A group of one is never worth factoring, and for a name with no separator
+      // it is actively wrong: defaultNamespaceOf sets ns === op === name, so the
+      // line renders "customers: customers()" while the legend promises the full
+      // name is namespace_op. The model then builds "customers_customers", which
+      // does not exist. Observed on the real corpus: customers, fifo, intransit
+      // were all unreachable via the documented rule.
+      //
+      // So singletons are emitted as complete names, and the legend says a line
+      // with no colon is already a full name.
+      if (list.length < 2) {
+        return list
+          .map((t) => (req(t).length ? `${t.name} ${req(t).join(",")}` : t.name))
+          .join("\n");
+      }
       const ops = list
-        .map((t) => {
-          const req = t.schema.required ?? [];
-          return req.length ? `${t.op}(${req.join(",")})` : `${t.op}()`;
-        })
+        .map((t) => (req(t).length ? `${t.op}(${req(t).join(",")})` : `${t.op}()`))
         .join(" ");
       return `${ns}: ${ops}`;
     });
@@ -445,7 +457,7 @@ export function compress(
         : mapStyle === "nocode"
           ? "Each line is: name required-args. "
           : mapStyle === "grouped"
-            ? "Lines are grouped by namespace: `namespace: op(required-args) …`. A tool's full name is namespace_op. "
+            ? "Lines are grouped by namespace: `namespace: op(required-args) …`, and a tool's full name is namespace_op. A line with no colon is already a complete tool name. "
             : "";
   // Codeless styles must tell the model to pass the name, not a code, or it will
   // hunt for a code column that is not there.
