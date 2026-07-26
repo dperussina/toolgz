@@ -127,33 +127,46 @@ describe("every level round-trips the whole real corpus", () => {
   });
 });
 
-describe("savedPct estimates tokens, not characters", () => {
+describe("savedPct is a character saving, and says so", () => {
   /**
-   * It used to be a raw character ratio and overstated by 7.6 points at level 1 — 46.8%
-   * reported against 39.2% measured by count_tokens. The field was documented as "do not
-   * publish this" instead of being fixed.
+   * 0.2.7 tried to make this a token estimate by dividing each side by a calibrated
+   * chars-per-token ratio. Measurement killed it: providers charge a fixed framing cost
+   * per tool definition that character counting cannot see, so the ratio approach was off
+   * by 44% on a 2-tool level-1 block while being within 1% at 149 tools. No local
+   * character-based calculation spans that range.
    *
-   * Characters per token is not constant across the two sides: uncompressed JSON is
-   * punctuation-dense, a signature line or map row reads more like prose. Each side is now
-   * divided by a ratio calibrated against count_tokens on two unrelated corpora.
-   *
-   * Ground truth below is from count_tokens on claude-opus-5 over the committed 149-tool
-   * corpus, so this test fails if the calibration drifts.
+   * The plain character ratio is the smaller, more predictable error — a few points
+   * optimistic — so it is reported as what it is. These tests pin the KNOWN BIAS rather
+   * than pretending to token accuracy.
    */
-  const MEASURED: Record<number, number> = { 1: 39.2, 2: 88.4, 3: 95.6 };
+  it("is computed from the character counts it reports", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    for (const level of [1, 2, 3] as const) {
+      const s = compress(REAL_TOOLS as any, { level }).stats;
+      const fromChars = Math.round((1 - s.compressedChars / s.originalChars) * 1000) / 10;
+      expect(s.savedPct, `level ${level}`).toBe(fromChars);
+    }
+  });
 
-  for (const level of [1, 2, 3] as const) {
-    it(`level ${level} is within 2pp of the measured token saving`, async () => {
-      const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
-      const { savedPct } = compress(REAL_TOOLS as any, { level }).stats;
-      expect(Math.abs(savedPct - MEASURED[level]), `savedPct=${savedPct}`).toBeLessThan(2);
-    });
-  }
+  it("runs optimistic against real token counts, by a few points", async () => {
+    // Ground truth from count_tokens on claude-opus-5 over the 149-tool corpus:
+    // level 1 is -39.2% and level 3 is -95.6% in tokens. The character figure should sit
+    // above both, and not wildly.
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const l1 = compress(REAL_TOOLS as any, { level: 1 }).stats.savedPct;
+    const l3 = compress(REAL_TOOLS as any, { level: 3 }).stats.savedPct;
+    expect(l1).toBeGreaterThan(39.2);
+    expect(l1 - 39.2).toBeLessThan(10);
+    expect(l3).toBeGreaterThan(95.6);
+    expect(l3 - 95.6).toBeLessThan(3);
+  });
 
-  it("would have failed on the old character-ratio implementation", async () => {
-    // The old value at level 1 was 46.8%, which is 7.6pp out — outside the 2pp bound
-    // above. Recorded so the bound is understood as load-bearing, not arbitrary.
-    expect(Math.abs(46.8 - MEASURED[1])).toBeGreaterThan(2);
+  it("never claims a saving when the output grew", () => {
+    // Level 1 can enlarge a tiny tool set: the signature line it adds can exceed the
+    // per-property descriptions it strips. A negative number here is correct, not a bug.
+    const tiny = [{ name: "a_b", description: "x", inputSchema: { type: "object", properties: { q: { type: "string" } } } }];
+    const s = compress(tiny as any, { level: 1 }).stats;
+    if (s.compressedChars > s.originalChars) expect(s.savedPct).toBeLessThan(0);
   });
 
   it("still reports the raw character counts alongside it", async () => {

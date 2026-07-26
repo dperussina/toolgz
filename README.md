@@ -346,6 +346,31 @@ style in 0.2.0.
 
 ---
 
+## Runnable examples
+
+Five files in [`examples/`](examples), all offline — no API key, no cost. Every one is
+**executed by the test suite**, so an example that stops working is a failing test rather
+than a bug report from you.
+
+```bash
+npx tsx examples/01-minimal.ts
+```
+
+| File | Shows |
+|---|---|
+| [`01-minimal.ts`](examples/01-minimal.ts) | the smallest useful thing: `recommendLevel` → `compress` → `resolve` |
+| [`02-agent-loop.ts`](examples/02-agent-loop.ts) | the full loop against a scripted model, covering all three `resolve()` outcomes including a recovery |
+| [`03-mcp-servers.ts`](examples/03-mcp-servers.ts) | 149 real tools from 14 MCP servers, all four levels, and the name-collision hazard |
+| [`04-providers.ts`](examples/04-providers.ts) | the four provider envelopes side by side, plus the Gemini schema repairs |
+| [`05-per-model.ts`](examples/05-per-model.ts) | `model`/`objective` selection and reading `stats` to see what was actually used |
+
+Two things `04-providers.ts` demonstrates rather than describes, because both have bitten
+people: `/v1/responses` needs the **flat** tool shape when you set reasoning effort, and
+Gemini returns **one** wrapper object containing all declarations, so you count
+`tools[0].functionDeclarations.length`.
+
+---
+
 ## Using it: the full guide
 
 Everything below was a separate `docs/GUIDE.md`. It is inline now, deliberately: the
@@ -767,8 +792,7 @@ console.log(c.stats);
 //   originalChars: 61461, compressedChars: 2211, savedPct: 96.4 }
 ```
 
-`savedPct` estimates the token saving (calibrated against `count_tokens`, ~1–2pp
-accurate). `originalChars` and `compressedChars` give the raw character counts.
+`savedPct` is a character saving, a few points optimistic against tokens. `originalChars` and `compressedChars` give the raw character counts.
 
 **I need the real token numbers.**
 Count them with the provider's own endpoint. Never use `tiktoken` for Claude —
@@ -842,16 +866,21 @@ Returns:
 | `codeFor(name)` | `→ string` | real name → level-3 code; throws below level 3 |
 | `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct` |
 
-> **`savedPct` estimates tokens, and is accurate to a point or two.** It used to be a raw
-> character ratio, which overstated by 7.6 points at level 1. Characters per token differs
-> between the two sides — uncompressed JSON is punctuation-dense, a signature line reads
-> more like prose — so it now divides each side by a ratio calibrated against
-> `count_tokens` on two unrelated corpora. Current error on the real corpus: **+1.5pp at
-> level 1, −0.3pp at level 2, +0.1pp at level 3.**
+> **`savedPct` is a character saving, and runs a few points optimistic against tokens.**
+> On the real 149-tool corpus it reports 46.8% at level 1 where `count_tokens` measures
+> 39.2%, and 96.6% at level 3 against 95.6%.
 >
-> It is still a local estimate with no API call. For a figure you publish, measure with
-> your provider's token counter; `originalChars` and `compressedChars` are also on `stats`
-> if you want the raw counts.
+> We tried making it a token estimate in 0.2.7 and reverted it in 0.2.8. Providers charge a
+> fixed framing cost per tool definition that character counting cannot see: at 149 tools
+> it amortises away, at 2 tools it dominates, and the calibrated estimate was off by 44% on
+> a small level-1 block while being within 1% at scale. The plain character ratio is the
+> smaller and more predictable error.
+>
+> Use it as a local signal. For anything you publish, measure with your provider's token
+> counter. `originalChars` and `compressedChars` are on `stats` for the raw counts.
+>
+> A negative value is possible and correct: on a very small tool set, level 1's signature
+> line can exceed the per-property descriptions it strips.
 | `encodeCallForTest(name, args)` | `→ {name, args}` | build the raw call a model would emit; test aid |
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
@@ -960,7 +989,7 @@ and it does not get deleted.
 ## Development
 
 ```bash
-npm test        # 277 tests, offline, no cost
+npm test        # 283 tests, offline, no cost
 npm run build   # tsc → dist/ with .d.ts
 
 npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money

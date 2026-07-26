@@ -36,13 +36,24 @@ describe("recommendLevel", () => {
     }
   });
 
-  it("recommends level 3 once namespaces are deep enough to amortise", () => {
-    expect(recommendLevel(build(6, 12)).level).toBe(3);
+
+  it("discloses the turn cost when it recommends level 3", async () => {
+    // build(6,12) used to trigger level 3 via the namespace-shape rule. It is 72 tools
+    // with a one-property schema — only ~4,900 tokens, about 2.5% of a 200k window — so
+    // level 1 is now correct for it and a realistic corpus is needed to exercise level 3.
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const r = recommendLevel(REAL_TOOLS as any);
+    expect(r.level).toBe(3);
+    expect(r.reason).toMatch(/turn/i);
   });
 
-  it("discloses the turn cost when it recommends level 3", () => {
+  it("many tools with trivial schemas correctly stay at level 1", () => {
+    // Tool COUNT is not the variable; block SIZE is. 72 tools whose schemas are one
+    // string property do not threaten anyone's context budget, and level 1 keeps the
+    // provider's argument validation.
     const r = recommendLevel(build(6, 12));
-    expect(r.reason).toMatch(/turn/i);
+    expect(r.level).toBe(1);
+    expect(r.toolCount).toBe(72);
   });
 
   it("stays at level 1 for a wide, sparse tool set", () => {
@@ -102,6 +113,14 @@ describe("recommendLevel sizes the block instead of testing its shape", () => {
     const r = recommendLevel(REAL_TOOLS.slice(0, 8) as any);
     expect(r.level).toBe(1);
     expect(r.reason).toMatch(/validation/i);
+  });
+
+  it("does not push a 14-tool set into dispatcher mode", async () => {
+    // An external reviewer flagged this: a 4,000-token threshold sent 14-tool sets to
+    // level 3, losing provider-side validation for a saving that does not change what
+    // fits in a 200k window. The threshold is now ~10,000 tokens, about 5% of one.
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    expect(recommendLevel(REAL_TOOLS.slice(0, 14) as any).level).toBe(1);
   });
 
   it("estimates the level-1 block within 5% of a real token count", async () => {

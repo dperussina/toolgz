@@ -75,7 +75,11 @@ export function recommendLevel(
   // provider's own schema enforcement, which levels 2-3 give up. That is worth more
   // than a saving you would not notice — hence an absolute threshold on the block,
   // not a shape test.
-  const THRESHOLD_TOKENS = 4000;
+  // 10,000 tokens is ~5% of a 200k window. Below that, reclaiming the block does not
+  // change what fits, and level 1 keeps the provider's own argument validation — worth
+  // more than a saving you would not notice. An external reviewer flagged the earlier
+  // 4,000 threshold for pushing 14-tool sets into dispatcher mode; they were right.
+  const THRESHOLD_TOKENS = 10000;
 
   if (l1Tokens < THRESHOLD_TOKENS) {
     return {
@@ -88,6 +92,6 @@ export function recommendLevel(
   return {
     ...base,
     level: 3,
-    reason: `${toolCount} tools take ~${l1Tokens.toLocaleString()} tokens at level 1; level 3 replaces them with two dispatcher tools plus a cached map. Measured on 149 real MCP tools: 41,648 tokens at level 1 against 2,980 at level 3, and 60/60 tasks completed across four frontier providers with zero hallucinated names. The cost is roughly 0.3-1.7 lookup calls per task — so about half an extra turn — plus the loss of provider-side argument checking — keep \`validate\` on, which is what catches malformed arguments instead. If latency matters more than context, stay at level 1.`,
+    reason: `${toolCount} tools take ~${l1Tokens.toLocaleString()} tokens at level 1; level 3 replaces them with two dispatcher tools plus a cached map. Measured on 149 real MCP tools: 41,648 tokens at level 1 against 2,980 at level 3, and 60/60 tasks completed across four frontier providers with zero hallucinated names. The cost is roughly 0.3-1.7 lookup calls per task — so about half an extra turn — plus the loss of provider-side argument checking. Keep \`validate\` on; it is what catches malformed arguments instead. If latency matters more than context, stay at level 1.`,
   };
 }

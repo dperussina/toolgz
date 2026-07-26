@@ -226,27 +226,19 @@ export function compress(
     const compressedChars =
       countSchemaTokensApprox(wire) + systemPreamble.length;
 
-    // `savedPct` is meant to answer "how much of my tool block did I get back", which is
-    // a TOKEN question. Deriving it from a raw character ratio answered a different one
-    // and overstated: on the real corpus it reported 46.8% at level 1 where count_tokens
-    // measures 39.2% — 7.6 points high, and the field was documented as "do not publish
-    // this" rather than fixed.
+    // `savedPct` is a CHARACTER saving, deliberately.
     //
-    // Characters per token is not constant across the two sides. Uncompressed JSON is
-    // punctuation-dense; a signature line or a map row reads more like prose. Measured
-    // against count_tokens on two unrelated corpora (149 real MCP tools and a 100-tool
-    // synthetic fixture) the ratios are stable per level:
+    // 0.2.7 tried to make it a token estimate by dividing each side by a chars-per-token
+    // ratio calibrated against count_tokens. That was a mistake, and measurement caught
+    // it: providers charge a fixed framing cost per tool definition that character
+    // counting cannot see. At 149 tools it amortises away, at 2 tools it dominates — the
+    // ratio approach was off by 44% on a 2-tool level-1 block while being within 1% at
+    // 149. No local character-based calculation can span that range.
     //
-    //   uncompressed  2.39 / 2.45      level 2  2.20 / 1.99
-    //   level 1       2.15 / 2.19      level 3  1.92 / 1.91
-    //
-    // Dividing by these brings the error to ~1.5 points at level 1 and ~0.1 at level 3.
-    // Still an estimate — it is a local calculation with no API call — but now an
-    // estimate of the right quantity.
-    const CHARS_PER_TOKEN: Record<Level, number> = { 0: 2.42, 1: 2.17, 2: 2.1, 3: 1.92 };
-    const estTokens = (chars: number, at: Level) => chars / CHARS_PER_TOKEN[at];
-    const originalTokens = estTokens(originalChars, 0);
-    const compressedTokens = estTokens(compressedChars, level);
+    // The plain character ratio is the smaller and more predictable error: it runs a few
+    // points optimistic (−7.7% chars against −4.9% real tokens on a 2-tool set; 46.8%
+    // against 39.2% on 149 real tools). So it is reported as what it is, and the docs say
+    // to measure with your provider's counter for anything you publish.
     return {
       tools: wire,
       systemPreamble,
@@ -271,7 +263,7 @@ export function compress(
         savedPct:
           originalChars === 0
             ? 0
-            : Math.round((1 - compressedTokens / originalTokens) * 1000) / 10,
+            : Math.round((1 - compressedChars / originalChars) * 1000) / 10,
       },
     };
   };
