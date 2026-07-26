@@ -46,6 +46,7 @@ const MAP_STYLES: MapStyle[] = [
   "terse",
   "nocode",
   "grouped",
+  "compact",
 ];
 
 /**
@@ -141,6 +142,20 @@ export function compress(
         if (opCounts.get(t.op) === 1 && !codeToTool.has(t.op)) codeToTool.set(t.op, t);
       }
     }
+  } else if (mapStyle === "compact" && level === 3) {
+    // Flat two-letter index rather than the namespace-prefixed `a0` scheme.
+    // Measured cheaper on every tokenizer, and the namespace prefix was already
+    // redundant with the tool name printed on the same line.
+    //
+    // Deliberately NOT base36, which ties the best token score and is broken:
+    // (26).toString(36) === "q" and (29).toString(36) === "t", so two codes would
+    // collide with the dispatcher tool names and make those tools unreachable via
+    // the bare-code path in resolve().
+    tools.forEach((t, i) => {
+      const code = CODE_CHARS[Math.floor(i / 26) % 26] + CODE_CHARS[i % 26];
+      codeToTool.set(code, t);
+      toolToCode.set(t.name, code);
+    });
   } else if (level === 3) {
     let ni = 0;
     for (const [, list] of groups) {
@@ -380,6 +395,11 @@ export function compress(
       const req = t.schema.required ?? [];
       return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
     }
+    // A space costs fewer tokens than a comma at the same character count.
+    if (mapStyle === "compact") {
+      const req = t.schema.required ?? [];
+      return req.length ? `${code} ${t.name} ${req.join(" ")}` : `${code} ${t.name}`;
+    }
     // `nocode`: the code already *is* the name, so emitting both would restore
     // the duplication this style exists to remove.
     if (mapStyle === "nocode") {
@@ -452,6 +472,8 @@ export function compress(
   const mapLegend =
     mapStyle === "name+required"
       ? "Each line is: code name required-args. "
+      : mapStyle === "compact"
+        ? "Each line is: code name required-args, space separated. "
       : mapStyle === "signature"
         ? "Each line is: code name(args), where ? marks optional. "
         : mapStyle === "nocode"

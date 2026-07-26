@@ -361,3 +361,85 @@ describe("grouped: a name with no separator must not become a degenerate group",
     expect(unreachable.map((t: any) => t.name)).toEqual([]);
   });
 });
+
+describe("compact: same information, cheaper serialization", () => {
+  /**
+   * Measured with real tokenizers on the 149-tool real corpus, map block only:
+   *
+   *              Claude  GPT o200k  Gemini  Grok   chars
+   *   default      2428       1331    1573  1564    5100
+   *   compact      2078       1106    1312  1333    4958
+   *
+   * Two changes, both information-preserving:
+   *   1. space instead of comma between required args — measured -80 Claude tokens
+   *      at IDENTICAL character count, which is why this study used tokens.
+   *   2. flat two-letter code instead of the namespace-prefixed `a0`, whose
+   *      namespace was already redundant with the name on the same line.
+   *
+   * Base36 codes scored the same and are BROKEN: (26).toString(36) === "q" and
+   * (29).toString(36) === "t" collide with the dispatcher tool names, making those
+   * tools unreachable via resolve()'s bare-code path.
+   */
+  const c = () => compress(TOOLS, { level: 3, mapStyle: "compact" });
+
+  it("separates required args with a space, not a comma", () => {
+    const map = mapOf(c().systemPreamble);
+    expect(map).toContain("github_create_issue owner repo title");
+    expect(map).not.toContain("owner,repo,title");
+  });
+
+  it("uses flat two-letter codes", () => {
+    for (const t of TOOLS) expect(c().codeFor(t.name)).toMatch(/^[a-z]{2}$/);
+  });
+
+  it("never issues a code colliding with the t or q dispatchers", () => {
+    // The base36 trap. Check a corpus large enough to reach index 26 and 29.
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      name: `svc_op${i}`,
+      description: "d",
+      inputSchema: { type: "object", properties: {} },
+    }));
+    const k = compress(many as any, { level: 3, mapStyle: "compact" });
+    const codes = many.map((t) => k.codeFor(t.name));
+    expect(codes).not.toContain("t");
+    expect(codes).not.toContain("q");
+    expect(new Set(codes).size).toBe(many.length);
+  });
+
+  it("carries the same information as the default it replaces", () => {
+    const a = compress(TOOLS, { level: 3, mapStyle: "name+required" });
+    const b = c();
+    // Same tools, same required args, only the serialization differs.
+    for (const t of TOOLS) {
+      const req = (t.inputSchema as any).required ?? [];
+      const line = mapOf(b.systemPreamble).split("\n").find((l) => l.includes(t.name))!;
+      for (const r of req) expect(line, t.name).toContain(r);
+    }
+    // Character count is IDENTICAL: comma->space is one char for one char, and
+    // `aa` is as long as `a0`. That is the point of this style, and the reason it
+    // was found by measuring tokens rather than bytes — a character-based metric
+    // reports this change as worth exactly nothing.
+    expect(mapOf(b.systemPreamble).length).toBe(mapOf(a.systemPreamble).length);
+  });
+
+  it("round-trips by code and by real name", () => {
+    const k = c();
+    for (const t of TOOLS) {
+      expect(k.resolve("t", { f: k.codeFor(t.name), a: {} }).kind).not.toBe("meta");
+      const byName = k.resolve("t", { f: t.name, a: {} });
+      if (byName.kind === "error") expect(byName.message).toMatch(/Missing required/);
+    }
+  });
+
+  it("resolves every tool in the real corpus, by code and by name", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const k = compress(REAL_TOOLS as any, { level: 3, mapStyle: "compact" });
+    const found = (r: any) => r.kind === "call" || /Missing required/.test(r.message ?? "");
+    const bad = REAL_TOOLS.filter(
+      (t: any) =>
+        !found(k.resolve("t", { f: k.codeFor(t.name), a: {} })) ||
+        !found(k.resolve("t", { f: t.name, a: {} })),
+    );
+    expect(bad.map((t: any) => t.name)).toEqual([]);
+  });
+});

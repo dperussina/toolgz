@@ -256,7 +256,19 @@ async function main() {
           : suiteName === "all"
             ? [...SCENARIOS, ...ACCURACY_SCENARIOS, ...REAL_SCENARIOS]
             : ACCURACY_SCENARIOS;
-  const scenarios = only ? suite.filter((s) => s.id === only) : suite;
+  // --scenario accepts a comma-separated list. A targeted re-test after a fix
+  // should not have to re-run the whole suite, and re-running everything is how a
+  // cheap verification quietly becomes a $25 one.
+  const wanted = only ? new Set(only.split(",").map((s) => s.trim()).filter(Boolean)) : null;
+  if (wanted) {
+    const ids = new Set(suite.map((s) => s.id));
+    for (const id of wanted) {
+      if (!ids.has(id)) {
+        throw new Error(`unknown scenario "${id}". Available: ${[...ids].join(", ")}`);
+      }
+    }
+  }
+  const scenarios = wanted ? suite.filter((s) => wanted.has(s.id)) : suite;
 
   const providers = await loadProviders(which);
   if (!providers.length) {

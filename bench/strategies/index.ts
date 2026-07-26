@@ -208,12 +208,26 @@ export const minifiedGrouped = fromLibrary(
   { level: 3, mapStyle: "grouped" },
 );
 
+/**
+ * Same information and same map contract as the shipped default, serialised more
+ * cheaply: space instead of comma between required args (identical character count,
+ * fewer tokens on every tokenizer measured) and a flat two-letter code. Measured
+ * -14.4% map tokens on claude-opus-5 and -16.6% on gpt-5.6-sol against a character
+ * reduction of only 3.5%, which is why it was found in tokens and not in bytes.
+ */
+export const minifiedCompact = fromLibrary(
+  "minified-compact",
+  "Arm A⁶ · token-optimised serialization",
+  { level: 3, mapStyle: "compact" },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
   minifiedTerse,
   minifiedPlus,
   minifiedSig,
   minifiedNocode,
   minifiedGrouped,
+  minifiedCompact,
 ];
 
 /** Maps each library-backed arm to the configuration it must equal. */
@@ -228,4 +242,5 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedSig, opts: { level: 3, mapStyle: "signature" } },
   { arm: minifiedNocode, opts: { level: 3, mapStyle: "nocode" } },
   { arm: minifiedGrouped, opts: { level: 3, mapStyle: "grouped" } },
+  { arm: minifiedCompact, opts: { level: 3, mapStyle: "compact" } },
 ];

@@ -43,32 +43,37 @@ export type Level = 0 | 1 | 2 | 3;
  * How each line of the level-3 `<toolmap>` is rendered.
  *
  *   name           `a0 github_create_issue`
- *   name+required  `a0 github_create_issue owner,repo,title`
+ *   name+required  `a0 github_create_issue owner,repo,title`   <- default
+ *   compact        `aa github_create_issue owner repo title`
  *   signature      `a0 github_create_issue(owner,repo,title,body?,labels?)`
  *   terse          `a0 create new issue in repository`
+ *   nocode         `github_create_issue owner,repo,title`
+ *   grouped        `github: create_issue(owner,repo,title) search_issues(q)`
  *
- * `name` is the default and the smallest. `name+required` costs a few tokens
- * per tool and exists to cut malformed arguments on models that fill the
- * generic argument bag badly — the dispatcher levels give up provider-side
- * constrained decoding, and this buys some of it back cheaply. `signature` also
- * names the optional parameters, which removes most remaining `q()` lookups —
- * a bigger cached map traded for fewer turns, which matters on models where
- * every turn pays for a fresh round of reasoning. `terse` drops the real name
- * entirely; it is the most aggressive and the least legible.
- */
-/**
- * How each line of the level-3 `<toolmap>` is rendered.
+ * `name+required` is the default, chosen on measurement: it costs a few tokens per
+ * tool and cuts malformed arguments on models that fill the generic argument bag
+ * badly, because the dispatcher levels give up provider-side constrained decoding
+ * and this buys some of it back cheaply. `name` is smaller and failed
+ * deterministically on grok-4.5. `signature` also names optional parameters, which
+ * removes most remaining `q()` lookups — a bigger cached map traded for fewer
+ * turns, which matters where every turn pays for a fresh round of reasoning.
+ * `terse` drops the real name entirely; most aggressive, least legible.
  *
- * `nocode` and `grouped` are experimental. They drop the two-character code
- * column, because the map already carries the tool's real name and so pays for
- * identity twice; measured on real MCP tools that duplication is ~19% of the
- * map's tokens. With no code, the tool's own name *is* its map key, which also
- * removes a failure mode we have observed in the wild (a model calling the code
- * as the tool name — see tests/robustness.test.ts).
+ * The rest are experimental and NOT recommended until the cross-provider accuracy
+ * sweep clears them.
  *
- * Neither is the default yet: bare `name` was also smaller than the default and
- * failed deterministically on grok-4.5, so a size win stays a hypothesis until
- * the cross-provider accuracy sweep confirms it.
+ * `nocode` and `grouped` drop the code column, since the map already carries the
+ * real name and so pays for identity twice. With no code the tool's own name is its
+ * map key, which also removes a failure mode seen in the wild (a model calling the
+ * code as the tool name — see tests/robustness.test.ts).
+ *
+ * `compact` carries exactly the same information as `name+required` and the same map
+ * contract, but serialises it more cheaply: a space rather than a comma between
+ * required arguments (identical character count, ~3% fewer tokens on every tokenizer
+ * measured) and a flat two-letter code rather than the namespace-prefixed `a0` form.
+ * Measured on 149 real MCP tools: −14.4% map tokens on claude-opus-5, −16.6% on
+ * gpt-5.6-sol, −16.2% on gemini-3.1-pro, −14.4% on grok-4.5, against a character
+ * reduction of only 3.5% — which is why this was measured in tokens, not characters.
  */
 export type MapStyle =
   | "name"
@@ -76,11 +81,12 @@ export type MapStyle =
   | "signature"
   | "terse"
   | "nocode"
-  | "grouped";
+  | "grouped"
+  | "compact";
 
 export type CompressOptions = {
   level?: Level;
-  /** Level 3 only. Ignored at levels 0–2, which emit no map. Default "name". */
+  /** Level 3 only. Ignored at levels 0–2, which emit no map. Default "name+required". */
   mapStyle?: MapStyle;
   /**
    * Group tools into namespaces. Default splits on the first `_` or `.`,
