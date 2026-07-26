@@ -63,11 +63,24 @@ committed in [`bench/results/`](bench/results/); recompute any figure with
 | Anthropic | `claude-opus-5` | 9,242 → **1,284** | 30,817 → **4,628** (−85%) | **−78%** | 15.0s → **12.1s** | 15/15 |
 | xAI | `grok-4.5` | 6,421 → **775** | 17,522 → **2,663** (−85%) | **−70%** | 6.1s → **4.6s** | 15/15 |
 | Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,302** (−79%) | **−62%** | 5.6s → **5.5s** | 15/15 |
-| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,694 → **2,196** (−71%) | **−7%** | 6.8s → **5.6s** | 15/15 |
+| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,694 → **2,196** (−71%) | *see below* | 6.8s → **5.6s** | 15/15 |
 
 Reasoning is enabled on all four at high effort, so this is a like-for-like frontier
 comparison. **60/60 tasks completed, zero hallucinated tool names, zero malformed
 arguments** — and it is faster than uncompressed on every provider.
+
+Every number above is recomputable from the raw per-run records in
+[`bench/results/`](bench/results) with `npx tsx bench/analyze-multi.ts --sweep=2026-07-25T19-19`.
+
+> **We do not claim a cost saving on OpenAI.** The cost column is blank there on
+> purpose. A `−7%` figure is defensible as a mean, but OpenAI's uncompressed cost is
+> heavily right-skewed — mean $0.0172 against a median of $0.0052 — so a handful of
+> expensive runs make compression look break-even. On the *typical* run compression is
+> about **2.5× dearer** there ($0.0129 median against $0.0052). The token and latency
+> wins on OpenAI are real and reproduce; the cost win does not.
+>
+> The other three providers hold up on both statistics: Anthropic −78% mean / −77%
+> median, xAI −70% / −62%, Google −62% / −58%.
 
 ### It does not make the model worse
 
@@ -103,9 +116,16 @@ sometimes call the map code as the tool name, and they sometimes pass arguments 
 of nested. Fixing all three took OpenAI from **+15% to −7%** and drove malformed arguments to
 **zero on every provider**.
 
-OpenAI's −7% is still the smallest saving, and honestly so: reasoning output dominates its
-bill, so a smaller prompt moves the total less. **Context-window occupancy remains the
-primary claim** — cost follows from it, by an amount that depends on your reasoning settings.
+That took OpenAI's *mean* cost from +15% to −8%. It did not make compression cheaper on
+OpenAI in general: by median it is still ~2.5× dearer there, because reasoning output
+dominates the bill and a smaller prompt barely moves the total. We used to publish that
+−7% as a saving. It was a mean over a heavily skewed distribution, and reporting it that
+way was wrong.
+
+**Context-window occupancy is the primary claim, not cost.** Prompt caching already makes
+tool tokens cheap; it does not reclaim the room they occupy. Cost follows by an amount
+that depends on your provider and reasoning settings, and on one of four providers we
+measured it does not follow at all.
 
 ---
 

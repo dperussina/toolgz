@@ -446,8 +446,28 @@ below that tier.
 
 Guard-rails for anyone else writing about this:
 
-- ❌ "80% cheaper" — it is not. Cost rose 15% on OpenAI. The claim is
-  **context-window occupancy**.
+- ❌ "80% cheaper" — it is not. The claim is **context-window occupancy**.
+- ❌ **Any cost saving on OpenAI.** Verified against sweep `2026-07-25T19-19`: the
+  uncompressed distribution there is heavily right-skewed (mean $0.0172, median
+  $0.0052), so the `−7%` we used to publish was a mean artifact. By median,
+  compression is ~2.5× *dearer* on `gpt-5.6-sol`. The token and latency wins are real;
+  the cost win is not. Decision #29.
+- ❌ **Any cost figure averaged across providers.** An Anthropic run costs ~10× a
+  Gemini/OpenAI/xAI run on this suite, so the mean reports Anthropic and little else.
+  One map style measured +7.8% on that mean while being −39% on Gemini and −16% on
+  OpenAI. Compare within a provider, or quote the median. `bench/analyze-multi.ts`
+  refuses to print the aggregate. Decision #25.
+- ❌ **Any figure pooled across sweeps.** Three resolver bugs were fixed mid-session,
+  so pooling blends library versions: a pooled task rate of 53/58 once described no
+  version of the code that ever existed. The analysis tool requires `--sweep=`.
+- ❌ **"Smaller than `@atlassian/mcp-compressor`."** It is not. Measured with
+  `count_tokens` on both a real 19-tool MCP set and a 100-tool fixture, their `max`
+  mode beat our shipped default on every corpus tested (788 vs 854 tokens; 1,540 vs
+  2,191). Our encoder is denser — their `<tool>` format costs ~40% more in tokens than
+  our map — but they ship the more aggressive configuration. The defensible claims are
+  zero runtime dependencies against their 82 packages and five prebuilt `.node`
+  binaries, an L1 that preserves provider-side constrained decoding, and published
+  cross-provider accuracy data.
 - ❌ "Works on any model" — measured on four frontier models from four vendors.
   Below the frontier tier, argument errors rise sharply (17/30 runs on
   Haiku 4.5, all recovered).
