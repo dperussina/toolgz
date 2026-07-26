@@ -225,6 +225,28 @@ export function compress(
   ): CompressResult => {
     const compressedChars =
       countSchemaTokensApprox(wire) + systemPreamble.length;
+
+    // `savedPct` is meant to answer "how much of my tool block did I get back", which is
+    // a TOKEN question. Deriving it from a raw character ratio answered a different one
+    // and overstated: on the real corpus it reported 46.8% at level 1 where count_tokens
+    // measures 39.2% — 7.6 points high, and the field was documented as "do not publish
+    // this" rather than fixed.
+    //
+    // Characters per token is not constant across the two sides. Uncompressed JSON is
+    // punctuation-dense; a signature line or a map row reads more like prose. Measured
+    // against count_tokens on two unrelated corpora (149 real MCP tools and a 100-tool
+    // synthetic fixture) the ratios are stable per level:
+    //
+    //   uncompressed  2.39 / 2.45      level 2  2.20 / 1.99
+    //   level 1       2.15 / 2.19      level 3  1.92 / 1.91
+    //
+    // Dividing by these brings the error to ~1.5 points at level 1 and ~0.1 at level 3.
+    // Still an estimate — it is a local calculation with no API call — but now an
+    // estimate of the right quantity.
+    const CHARS_PER_TOKEN: Record<Level, number> = { 0: 2.42, 1: 2.17, 2: 2.1, 3: 1.92 };
+    const estTokens = (chars: number, at: Level) => chars / CHARS_PER_TOKEN[at];
+    const originalTokens = estTokens(originalChars, 0);
+    const compressedTokens = estTokens(compressedChars, level);
     return {
       tools: wire,
       systemPreamble,
@@ -249,7 +271,7 @@ export function compress(
         savedPct:
           originalChars === 0
             ? 0
-            : Math.round((1 - compressedChars / originalChars) * 1000) / 10,
+            : Math.round((1 - compressedTokens / originalTokens) * 1000) / 10,
       },
     };
   };

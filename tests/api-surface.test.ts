@@ -126,3 +126,40 @@ describe("every level round-trips the whole real corpus", () => {
     }
   });
 });
+
+describe("savedPct estimates tokens, not characters", () => {
+  /**
+   * It used to be a raw character ratio and overstated by 7.6 points at level 1 — 46.8%
+   * reported against 39.2% measured by count_tokens. The field was documented as "do not
+   * publish this" instead of being fixed.
+   *
+   * Characters per token is not constant across the two sides: uncompressed JSON is
+   * punctuation-dense, a signature line or map row reads more like prose. Each side is now
+   * divided by a ratio calibrated against count_tokens on two unrelated corpora.
+   *
+   * Ground truth below is from count_tokens on claude-opus-5 over the committed 149-tool
+   * corpus, so this test fails if the calibration drifts.
+   */
+  const MEASURED: Record<number, number> = { 1: 39.2, 2: 88.4, 3: 95.6 };
+
+  for (const level of [1, 2, 3] as const) {
+    it(`level ${level} is within 2pp of the measured token saving`, async () => {
+      const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+      const { savedPct } = compress(REAL_TOOLS as any, { level }).stats;
+      expect(Math.abs(savedPct - MEASURED[level]), `savedPct=${savedPct}`).toBeLessThan(2);
+    });
+  }
+
+  it("would have failed on the old character-ratio implementation", async () => {
+    // The old value at level 1 was 46.8%, which is 7.6pp out — outside the 2pp bound
+    // above. Recorded so the bound is understood as load-bearing, not arbitrary.
+    expect(Math.abs(46.8 - MEASURED[1])).toBeGreaterThan(2);
+  });
+
+  it("still reports the raw character counts alongside it", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const s = compress(REAL_TOOLS as any, { level: 3 }).stats;
+    expect(s.originalChars).toBeGreaterThan(s.compressedChars);
+    expect(s.compressedChars).toBeGreaterThan(0);
+  });
+});

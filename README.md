@@ -767,8 +767,8 @@ console.log(c.stats);
 //   originalChars: 61461, compressedChars: 2211, savedPct: 96.4 }
 ```
 
-`savedPct` is a character-count proxy, not a token count — useful for a quick
-sanity check, not for billing.
+`savedPct` estimates the token saving (calibrated against `count_tokens`, ~1–2pp
+accurate). `originalChars` and `compressedChars` give the raw character counts.
 
 **I need the real token numbers.**
 Count them with the provider's own endpoint. Never use `tiktoken` for Claude —
@@ -842,11 +842,16 @@ Returns:
 | `codeFor(name)` | `→ string` | real name → level-3 code; throws below level 3 |
 | `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct` |
 
-> **`savedPct` counts characters, not tokens — and it overstates.** It is derived from
-> `countSchemaTokensApprox`, which is just `JSON.stringify(x).length`. On our real corpus
-> it reports ~97.8% where `count_tokens` measures **95.6%**. Use it as a cheap sanity
-> signal, never as a published figure; for anything you quote, measure with your
-> provider's token counter.
+> **`savedPct` estimates tokens, and is accurate to a point or two.** It used to be a raw
+> character ratio, which overstated by 7.6 points at level 1. Characters per token differs
+> between the two sides — uncompressed JSON is punctuation-dense, a signature line reads
+> more like prose — so it now divides each side by a ratio calibrated against
+> `count_tokens` on two unrelated corpora. Current error on the real corpus: **+1.5pp at
+> level 1, −0.3pp at level 2, +0.1pp at level 3.**
+>
+> It is still a local estimate with no API call. For a figure you publish, measure with
+> your provider's token counter; `originalChars` and `compressedChars` are also on `stats`
+> if you want the raw counts.
 | `encodeCallForTest(name, args)` | `→ {name, args}` | build the raw call a model would emit; test aid |
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
@@ -955,7 +960,7 @@ and it does not get deleted.
 ## Development
 
 ```bash
-npm test        # 272 tests, offline, no cost
+npm test        # 277 tests, offline, no cost
 npm run build   # tsc → dist/ with .d.ts
 
 npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money
