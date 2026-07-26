@@ -1,6 +1,6 @@
 <h1>toolgz</h1>
 
-<p><strong>Your agent spends 30–50k tokens of context on tool definitions before the user types a word. toolgz gets ~80% of it back.</strong></p>
+<p><strong>Your agent spends 30–70k tokens of context on tool definitions before the user types a word. toolgz gets ~80% of it back.</strong></p>
 
 <p>
 <a href="#measured-results">420-run cross-provider sweep</a> ·
@@ -51,7 +51,24 @@ if (r.kind === "call") await myDispatch(r.name, r.args);   // real name, real ar
 Four frontier models, seven strategies, five tool-selection tasks, 3 reps —
 **420 runs** on the current sweep, 1,200+ across all rounds. Every raw per-run record is
 committed in [`bench/results/`](bench/results/); recompute any figure with
-`npx tsx bench/analyze-multi.ts`.
+`npx tsx bench/analyze-multi.ts --sweep=<timestamp>`.
+
+**The table below uses a synthetic catalogue** — 100 realistic-but-invented MCP-style
+tools across 9 namespaces — because it lets us build deliberately confusable clusters
+that a real catalogue may not contain. Two things follow from that, and the first is
+uncomfortable:
+
+- Synthetic naming can flatter a compression style. One map style measured −21% on
+  this fixture because every tool name carried a `namespace_op` prefix to factor out.
+  On real MCP tools, which mostly do not, the same style was worth −1%.
+- Real catalogues are **bigger**, so these numbers understate the problem. A corpus of
+  **149 tools harvested from 14 live MCP servers** measures **68,494 prompt tokens**
+  uncompressed on `claude-opus-5` — more than twice the synthetic fixture, and about a
+  third of a 200k context window before the user types anything.
+
+The real corpus is committed at [`bench/fixtures/real-mcp-tools.json`](bench/fixtures/real-mcp-tools.json)
+with its own scenario suite (`--suite=real`), and it is the corpus of record for any
+claim about real deployments.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/savings-dark.svg">
