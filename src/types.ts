@@ -83,6 +83,11 @@ export type Level = 0 | 1 | 2 | 3;
  * gpt-5.6-sol, −16.2% on gemini-3.1-pro, −14.4% on grok-4.5, against a character
  * reduction of only 3.5% — which is why this was measured in tokens, not characters.
  */
+// Type-only, so the cycle with policy.generated.ts (which imports MapStyle from
+// here) is erased at compile time.
+import type { Objective } from "./policy.generated.js";
+export type { Objective };
+
 export type MapStyle =
   | "name"
   | "name+required"
@@ -110,6 +115,25 @@ export type CompressOptions = {
   /** Validate arguments against the original schema before dispatch. Default true. */
   validate?: boolean;
   /**
+   * Exact model id, e.g. "gpt-5.6-sol". When given, level 3 selects the best
+   * *measured* map style for that model from `src/policy.generated.ts`.
+   *
+   * Never a family: `gpt-5.6-sol` failing says nothing certain about `gpt-5.7`. An
+   * unknown model gets the conservative default — an absence of evidence, not a
+   * prediction. Behaviour is unchanged if you omit this.
+   */
+  model?: string;
+  /**
+   * What the selection optimises. Default "occupancy", because reclaiming context
+   * window is the point — prompt caching already makes tool tokens cheap but does not
+   * reclaim the room they take.
+   *
+   * As measured, "occupancy" currently selects the default on every known model: no
+   * style beat it by more than 3.1% on that axis, under the 5% floor. The table has
+   * real entries only for "cost".
+   */
+  objective?: Objective;
+  /**
    * Level 3 only. Prepend a generated `<toolgz>` cheat sheet to the preamble.
    *
    * Motivated by measurement on a real 149-tool catalogue: 66 tools (44%) declare
@@ -133,6 +157,12 @@ export type Resolution =
 
 export type CompressStats = {
   level: Level;
+  /** The map style actually used. */
+  mapStyle?: MapStyle;
+  /** What the caller asked for, when it differed from what was used. */
+  requestedMapStyle?: MapStyle;
+  /** Why a requested style was not used. Absent when nothing was substituted. */
+  fallbackReason?: string;
   toolCount: number;
   wireToolCount: number;
   originalChars: number;

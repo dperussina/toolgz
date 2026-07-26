@@ -33,6 +33,7 @@ import {
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
 import { nearest } from "./runtime/similar.js";
+import { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
 
 export * from "./types.js";
 export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/index.js";
@@ -170,7 +171,38 @@ export function compress(
   // 60/60 tasks, fewer malformed arguments, fewer lookup round-trips, and
   // faster wall-clock than uncompressed on every provider. The larger map pays
   // for itself by removing a discovery turn.
-  const mapStyle = options.mapStyle ?? "name+required";
+  // Resolve the map style: explicit request, then measured policy, then the
+  // conservative default. Any substitution is reported through stats rather than
+  // applied silently — silent substitution is the failure mode this project has been
+  // bitten by repeatedly.
+  const objective = options.objective ?? "occupancy";
+  let requestedMapStyle: MapStyle | undefined = options.mapStyle;
+  let fallbackReason: string | undefined;
+  let mapStyle: MapStyle;
+
+  if (options.mapStyle) {
+    const broken = options.model
+      ? BROKEN.find((b) => b.model === options.model && b.mapStyle === options.mapStyle)
+      : undefined;
+    if (broken) {
+      // Owner decision #15: disallow a measured-broken pair and fall back, rather
+      // than honour it with a warning.
+      mapStyle = CONSERVATIVE_DEFAULT;
+      fallbackReason =
+        `mapStyle "${options.mapStyle}" is measured unsafe on ${broken.model}: ` +
+        `${broken.reason} (n=${broken.n}, sweep ${broken.sweep}). ` +
+        `Using "${CONSERVATIVE_DEFAULT}" instead.`;
+    } else {
+      mapStyle = options.mapStyle;
+    }
+  } else if (options.model) {
+    const hit = POLICY.find(
+      (e) => e.model === options.model && e.objective === objective,
+    );
+    mapStyle = hit ? hit.mapStyle : CONSERVATIVE_DEFAULT;
+  } else {
+    mapStyle = CONSERVATIVE_DEFAULT;
+  }
   if (!MAP_STYLES.includes(mapStyle)) {
     throw new Error(
       `unsupported mapStyle: ${mapStyle} (expected ${MAP_STYLES.join(", ")})`,
@@ -301,6 +333,10 @@ export function compress(
       encodeCallForTest: encode,
       stats: {
         level,
+        mapStyle,
+        requestedMapStyle:
+          requestedMapStyle && requestedMapStyle !== mapStyle ? requestedMapStyle : undefined,
+        fallbackReason,
         toolCount: tools.length,
         wireToolCount: wire.length,
         originalChars,

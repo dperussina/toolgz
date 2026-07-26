@@ -1,6 +1,6 @@
 # 002 — Per-model default map style
 
-Status: **draft, evidence gathered** · Owner decision: brain decision #15
+Status: **implemented, and smaller than originally scoped** · Owner decision: brain decision #15
 Supporting evidence: brain decisions #22–#26
 
 ## Problem
@@ -145,11 +145,43 @@ A lookup table of measured facts with an expiry date, not a theory of models.
 Auto-detecting the model from the caller's SDK client. Too magic, and wrong when a
 proxy or gateway sits in between. The caller passes the id.
 
-## Open before implementation
+## Outcome: the feature shrank, and that is the honest result
 
-- **Running now:** 3 arms (`plus`, `nocode`, `explicit`) × 6 scenarios × 2 reps × 4
-  providers, 144 runs, n=12 per cell — the data the first generated table will be
-  built from.
-- Whether the cheat sheet earns a Gemini-only row (task #26). It eliminated Gemini's
-  lookups at n=4 and was worse everywhere else.
-- Tier-3 confirmation before any shipped default changes.
+Tier 3 settled it — 432 runs, 36 per arm per provider, analysed with the canonical
+tool scoped to one sweep.
+
+**There is no occupancy table.** Every `plus`-vs-`explicit` occupancy difference was
+within ±3.1%, under the 5% floor. The axis this spec called the *default objective*
+turned out to have nothing to select on. `nocode` did win occupancy by 11–15% — and is
+disqualified for a 19% silent failure rate on grok-4.5 (decision #31).
+
+**The cost table has three rows and one deliberate absence:**
+
+| Model | `cost` | measured |
+|---|---|---|
+| `gpt-5.6-sol` | `explicit` | −20.7% |
+| `gemini-3.1-pro-preview` | `explicit` | −15.4% |
+| `claude-opus-5` | `explicit` | −9.0% |
+| `grok-4.5` | *(absent)* | `explicit` is +13.2% there |
+
+So the shipped feature is: a three-row cost table, one broken-pair entry, and an
+observable fallback. Not the general per-model policy engine this spec opened with.
+Scoping it down was the finding, not a compromise.
+
+**What did ship**, in `src/policy.generated.ts` and `tests/policy.test.ts`:
+
+- `model` and `objective` options; behaviour unchanged when `model` is omitted
+- measured-broken pairs disallowed and substituted, per decision #15
+- `stats.mapStyle`, `stats.requestedMapStyle`, `stats.fallbackReason`
+- a drift test asserting every row's sweep is committed, its run count matches the raw
+  records, its recommended style completed *every* task it cites, every broken pair
+  really failed, and every row clears the 5% floor
+
+## Still open
+
+- The shipped `mapStyle` default is unchanged and still requires owner approval to
+  move. `explicit` is only reachable via `objective: "cost"`.
+- Whether the cheat sheet earns a Gemini-only row (task #26): it eliminated Gemini's
+  lookups at n=4 and was worse everywhere else. Never retested at scale.
+- No control arm has been run on the real suite at scale, so real-corpus *savings*
+  cannot yet be published — only the uncompressed size (68,494 tokens).
