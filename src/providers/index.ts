@@ -124,6 +124,48 @@ export function forGemini(c: CompressResult): {
             ? clean(v)
             : v;
     }
+    // Gemini rejects an array without `items`, and rejects the WHOLE request:
+    //   400 GenerateContentRequest.tools[0].function_declarations[4]
+    //       .parameters.properties[shipments].items: missing field
+    //
+    // Real MCP servers ship these — 7 of the 149 tools in bench/fixtures have an
+    // untyped array parameter (analyze_consolidation.shipments,
+    // compute_route.intermediates, optimize_waypoints.waypoints among them). One such
+    // tool anywhere in the catalogue used to fail every Gemini call.
+    //
+    // `items: {}` is what Gemini accepts and is the only honest repair: the source
+    // schema does not say what the items are, so we do not invent a type. Guessing
+    // `{type:"string"}` would also be accepted and would make the model send strings
+    // where the real API may want objects — a silent wrong-data bug in place of a loud
+    // rejection. Verified empirically: omitted is rejected; `{}`, `{type:"string"}` and
+    // `{type:"object"}` are all accepted.
+    // JSON Schema permits a union type (`"type": ["string","array"]`, as
+    // send_email_with_attachments.cc uses). Gemini requires a single type string and
+    // rejects the whole request otherwise. Take the first — deterministic, and the
+    // prompt-cache prefix must be byte-stable — and drop `items` if the pick is not an
+    // array, where it would be meaningless.
+    //
+    // Narrowing is safe because the ORIGINAL schema still accepts the narrowed form, so
+    // a value the model sends against it remains valid; validateArgs checks against
+    // that original before dispatch.
+    if (Array.isArray(out.type)) {
+      out.type = out.type[0];
+      if (out.type !== "array") delete out.items;
+    }
+    if (out.type === "array" && out.items === undefined) out.items = {};
+
+    // Gemini accepts `enum` only on strings, and rejects the whole request otherwise:
+    //   400 Invalid value at tools[0].function_declarations[30].parameters.properties[2]
+    // Real MCP servers ship numeric enums — deep_research.depth is
+    // {type:"number", enum:[1,2,3]}. Verified: string+enum accepted, number+enum and
+    // integer+enum rejected, `oneOf` accepted (so it needs no repair).
+    //
+    // We drop the enum and keep the type. The constraint is not lost: validateArgs
+    // checks arguments against the ORIGINAL schema before dispatch at every level, so
+    // an out-of-range value is still caught — the check moves from provider-side to
+    // library-side. Coercing to a string enum instead would make the model send "1"
+    // where the API wants 1, which is a silent type error rather than a caught one.
+    if (out.enum && out.type && out.type !== "string") delete out.enum;
     return out;
   };
 

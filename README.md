@@ -283,6 +283,19 @@ trip. A test asserts that file matches the code, so it cannot drift.
 
 ---
 
+### `signature`: the level-3 style with no lookups
+
+Worth calling out because it trades differently from the others. `signature` puts the full
+parameter list in the map, so the model never needs a `q()` lookup — **measured 0.0 lookups
+on all four providers**, against 0.1–0.5 for the default.
+
+That makes it the fastest and cheapest option on OpenAI (4.0s vs 5.6s; median cost $0.0106
+vs $0.0129) at the price of a larger cached map. But it is **not** universally better: on
+grok-4.5 it was slower (7.4s vs 4.6s), dearer, and produced the one malformed argument in
+that arm. Reach for it if lookups are your bottleneck and you are not on xAI.
+
+---
+
 ## Optional: let the library pick the map style for your model
 
 Level 3 has several map styles. Which one is cheapest turns out to depend on the
@@ -828,6 +841,12 @@ Returns:
 | `resolve(name, args)` | `→ Resolution` | translate a model call back |
 | `codeFor(name)` | `→ string` | real name → level-3 code; throws below level 3 |
 | `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct` |
+
+> **`savedPct` counts characters, not tokens — and it overstates.** It is derived from
+> `countSchemaTokensApprox`, which is just `JSON.stringify(x).length`. On our real corpus
+> it reports ~97.8% where `count_tokens` measures **95.6%**. Use it as a cheap sanity
+> signal, never as a published figure; for anything you quote, measure with your
+> provider's token counter.
 | `encodeCallForTest(name, args)` | `→ {name, args}` | build the raw call a model would emit; test aid |
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
@@ -863,6 +882,34 @@ Methodology and repo conventions: [../AGENTS.md](../AGENTS.md).
 ---
 
 ## Providers
+
+### Why `forGemini` returns one tool where the others return two
+
+It isn't sending less. Gemini's API nests *all* function declarations inside a single
+tool object — `[{ functionDeclarations: [...] }]` — where Anthropic and OpenAI take a
+flat array of tools. At level 3 the two dispatcher tools (`t` and `q`) are both present;
+they are just both inside that one wrapper. Count `tools[0].functionDeclarations.length`,
+not `tools.length`.
+
+### `forGemini` repairs three schema forms Gemini rejects
+
+Gemini rejects the **whole request** if any single declaration is invalid, so one
+non-conforming tool anywhere in your catalogue breaks every call. Three forms occur in
+real MCP servers, and the adapter repairs all three:
+
+| Form | Found in the real corpus | Repair |
+|---|---|---|
+| array with no `items` | 7 of 149 tools | adds `items: {}` |
+| `enum` on a non-string type | `{type:"number", enum:[1,2,3]}` | drops the `enum`, keeps the type |
+| union type `["string","array"]` | 1 tool | takes the first type |
+
+**The dropped `enum` is not a lost constraint.** `validateArgs` checks arguments against
+your *original* schema before dispatch at every level, so an out-of-range value is still
+caught — the check moves from provider-side to library-side. We deliberately do not coerce
+a numeric enum into a string enum: Gemini would accept it, and the model would then send
+`"1"` where your API wants `1`, turning a caught error into silent bad data.
+
+All 149 tools in the committed corpus pass Gemini at levels 0–3.
 
 ```ts
 import { forAnthropic, forOpenAI, forOpenAIResponses, forGemini } from "toolgz";
@@ -908,7 +955,7 @@ and it does not get deleted.
 ## Development
 
 ```bash
-npm test        # 252 tests, offline, no cost
+npm test        # 268 tests, offline, no cost
 npm run build   # tsc → dist/ with .d.ts
 
 npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money

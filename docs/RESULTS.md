@@ -456,6 +456,55 @@ session a partial read of a multi-field measurement produced a wrong conclusion.
 
 ---
 
+### Round 6c — three Gemini schema rejections found on real tools
+
+Found while probing provider tool-count limits, not by looking for it. Gemini rejects the
+**entire request** if one declaration is invalid, so a single non-conforming tool anywhere
+in a catalogue breaks every call. All three forms are present in the committed 149-tool
+corpus and none were handled:
+
+| Form | Occurrences | Example | Error |
+|---|---:|---|---|
+| array with no `items` | 7 tools | `analyze_consolidation.shipments` | `properties[shipments].items: missing field` |
+| `enum` on a non-string type | 1 | `deep_research.depth` = `{number, enum:[1,2,3]}` | `Invalid value at ...properties[2]` |
+| union type | 1 | `send_email_with_attachments.cc` = `["string","array"]` | needs a single type string |
+
+Each repair was chosen empirically rather than guessed. For the missing `items`, Gemini
+accepts `{}`, `{type:"string"}` and `{type:"object"}` — we emit `{}` because the source
+schema does not say what the items are and inventing a type would make the model send
+strings where the API may want objects, converting a loud rejection into silent bad data.
+
+The dropped `enum` does not lose the constraint: `validateArgs` checks against the original
+schema before dispatch at every level, so `depth: 99` is still rejected. The check moves
+from provider-side to library-side.
+
+Verified against the live API at levels 0–3 on all 149 tools, then pinned with 16 offline
+tests. Two of those exist to stop the guard rotting: one asserts the fixture still contains
+all three forms (otherwise the guards pass against nothing), and one asserts the dropped
+enum is still enforced. Removing the fix produces 6 failures.
+
+### Round 6d — provider tool-count caps
+
+A hard limit unrelated to context, found by binary search (rejections are free):
+
+| Provider | Max tools accepted | Past it |
+|---|---:|---|
+| xAI `grok-4.5` | **350** | `400 Maximum tools limit reached` |
+| OpenAI `gpt-5.6-sol` | 1,200+ | no cap found in range |
+| Anthropic `claude-opus-5` | 1,200+ | no cap found in range |
+| Google `gemini-3.1-pro-preview` | 1,200+ | no cap found in range |
+
+**Compression defeats the xAI cap outright.** Level 3 puts two tools on the wire whatever
+the catalogue size, so 351, 1,000 and 5,000-tool catalogues all succeed where uncompressed
+fails at 351. This is the one hard enablement effect reachable with our providers — not the
+context-overflow cliff, which needs small-window models we do not test.
+
+*Measurement correction:* the first pass reported Gemini capping at 4 tools. That was a
+schema rejection on the 5th tool misread as a count limit by the binary search. There is no
+Gemini tool cap. Verify the error text before trusting a threshold.
+
+---
+
 ## Findings
 
 ### 1. Name minification did not cost accuracy — the design's central worry was wrong
