@@ -604,3 +604,74 @@ describe("optional map style", () => {
     expect(p).toContain("? marks a tool whose parameters are all optional");
   });
 });
+
+describe("explicit: mark the tools that need no arguments", () => {
+  /**
+   * The cheap answer to the problem `optional` attacks. On the real 149-tool
+   * catalogue, 66 tools (44%) declare no required parameters, so their map line is a
+   * bare name — indistinguishable from a tool whose parameters were simply omitted.
+   * Those tools are callable with NO arguments at all, and the map never says so, so
+   * models spend a q() lookup finding out. Lookups drove a 6x cost swing in tier 2.
+   *
+   * Measured on that catalogue: naming four optional parameters each costs ~2,640
+   * characters (mapStyle "optional", which measured +41% cost); the marker costs
+   * ~198, thirteen times less, and states the fact the model actually lacks.
+   */
+  const TOOLS2: Tool[] = [
+    { name: "svc_needs_args", description: "x", inputSchema: { type: "object", properties: { a: { type: "string" }, b: { type: "string" } }, required: ["a"] } },
+    { name: "svc_needs_none", description: "y", inputSchema: { type: "object", properties: { limit: { type: "integer" }, offset: { type: "integer" } } } },
+    { name: "svc_truly_empty", description: "z", inputSchema: { type: "object", properties: {} } },
+  ];
+  const c = () => compress(TOOLS2, { level: 3, mapStyle: "explicit" });
+
+  it("marks a zero-required tool with ()", () => {
+    expect(mapOf(c().systemPreamble)).toMatch(/svc_needs_none \(\)/);
+  });
+
+  it("marks a tool with no parameters at all the same way — it is also callable as-is", () => {
+    expect(mapOf(c().systemPreamble)).toMatch(/svc_truly_empty \(\)/);
+  });
+
+  it("leaves a tool with required args exactly as the default renders it", () => {
+    const e = mapOf(c().systemPreamble).split("\n").find((l) => l.includes("svc_needs_args"));
+    const d = mapOf(compress(TOOLS2, { level: 3 }).systemPreamble).split("\n").find((l) => l.includes("svc_needs_args"));
+    expect(e).toBe(d);
+  });
+
+  it("explains the marker, or the model has to guess what () means", () => {
+    expect(c().systemPreamble).toContain("takes no required arguments");
+  });
+
+  it("costs far less per tool than naming the optional parameters", async () => {
+    // Compare the MAP, not the whole preamble: the legend is fixed overhead that
+    // does not scale, and on a 3-tool fixture it swamps the per-line difference.
+    // The real corpus is where the per-tool cost actually shows.
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const exp = mapOf(compress(REAL_TOOLS as any, { level: 3, mapStyle: "explicit" }).systemPreamble).length;
+    const opt = mapOf(compress(REAL_TOOLS as any, { level: 3, mapStyle: "optional" }).systemPreamble).length;
+    const def = mapOf(compress(REAL_TOOLS as any, { level: 3 }).systemPreamble).length;
+    // explicit should sit far closer to the default than to `optional`.
+    expect(exp - def).toBeLessThan((opt - def) / 5);
+  });
+
+  it("does not claim () for a tool that has required args", () => {
+    expect(mapOf(c().systemPreamble)).not.toMatch(/svc_needs_args.*\(\)/);
+  });
+
+  it("resolves every tool in the real corpus", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const k = compress(REAL_TOOLS as any, { level: 3, mapStyle: "explicit" });
+    const bad = REAL_TOOLS.filter((t: any) => {
+      const r = k.resolve("t", { f: k.codeFor(t.name), a: {} });
+      return r.kind === "error" && !/Missing required/.test(r.message);
+    });
+    expect(bad.map((t: any) => t.name)).toEqual([]);
+  });
+
+  it("still accepts a zero-required tool called with no arguments", () => {
+    const k = c();
+    const r = k.resolve("t", { f: k.codeFor("svc_needs_none"), a: {} });
+    expect(r.kind).toBe("call");
+    if (r.kind === "call") expect(r.args).toEqual({});
+  });
+});

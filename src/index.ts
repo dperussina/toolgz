@@ -48,6 +48,7 @@ const MAP_STYLES: MapStyle[] = [
   "grouped",
   "compact",
   "optional",
+  "explicit",
 ];
 
 /**
@@ -455,6 +456,14 @@ export function compress(
       const req = t.schema.required ?? [];
       return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
     }
+    // `explicit`: same as the default when a tool has required args, but marks a
+    // zero-required tool `()` so the model knows it can be called as-is rather than
+    // spending a lookup to find out. Three characters per affected tool against
+    // ~40 for naming its optional parameters.
+    if (mapStyle === "explicit") {
+      const req = t.schema.required ?? [];
+      return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name} ()`;
+    }
     // `optional`: required args when present, otherwise the optional ones. A line
     // that names no parameters at all forces a lookup, and on a real catalogue 44%
     // of tools have zero required parameters — so for nearly half the map the
@@ -546,6 +555,8 @@ export function compress(
         ? "Each line is: code name required-args, space separated. "
         : mapStyle === "optional"
           ? "Each line is: code name required-args; a leading ? marks a tool whose parameters are all optional. "
+          : mapStyle === "explicit"
+            ? "Each line is: code name required-args. A line ending in () takes no required arguments and can be called with none. "
       : mapStyle === "signature"
         ? "Each line is: code name(args), where ? marks optional. "
         : mapStyle === "nocode"

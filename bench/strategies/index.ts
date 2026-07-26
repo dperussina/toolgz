@@ -249,6 +249,18 @@ export const minifiedNocodeSheet = fromLibrary(
   { level: 3, mapStyle: "nocode", cheatSheet: true },
 );
 
+/**
+ * The cheap fix for the zero-required blind spot. 44% of real tools declare no
+ * required parameters, so their map line is a bare name and models spend a lookup
+ * confirming they can be called as-is. `explicit` says so for +275 characters, where
+ * naming the optional parameters (mapStyle "optional") cost +3,240 and measured +41%.
+ */
+export const minifiedExplicit = fromLibrary(
+  "minified-explicit",
+  "Arm B · mark zero-required tools ()",
+  { level: 3, mapStyle: "explicit" },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
   minifiedTerse,
   minifiedPlus,
@@ -259,6 +271,7 @@ export const A_VARIANTS: CompressionStrategy[] = [
   minifiedSheet,
   minifiedOptional,
   minifiedNocodeSheet,
+  minifiedExplicit,
 ];
 
 /** Maps each library-backed arm to the configuration it must equal. */
@@ -277,4 +290,5 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedSheet, opts: { level: 3, cheatSheet: true } },
   { arm: minifiedOptional, opts: { level: 3, mapStyle: "optional" } },
   { arm: minifiedNocodeSheet, opts: { level: 3, mapStyle: "nocode", cheatSheet: true } },
+  { arm: minifiedExplicit, opts: { level: 3, mapStyle: "explicit" } },
 ];

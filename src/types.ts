@@ -67,6 +67,14 @@ export type Level = 0 | 1 | 2 | 3;
  * map key, which also removes a failure mode seen in the wild (a model calling the
  * code as the tool name — see tests/robustness.test.ts).
  *
+ * `explicit` is the cheap answer to the same problem `optional` attacks. On a real
+ * catalogue 44% of tools declare no required parameters, so their map line is a bare
+ * name — indistinguishable from a tool whose parameters were simply omitted. Those
+ * tools are callable with NO arguments at all, and the map never says so, which is
+ * why models spend a q() lookup confirming. `explicit` marks them `name ()`.
+ * Measured: naming four optional parameters each costs ~2,640 characters; the marker
+ * costs ~198, thirteen times less, and states the fact the model actually lacks.
+ *
  * `compact` carries exactly the same information as `name+required` and the same map
  * contract, but serialises it more cheaply: a space rather than a comma between
  * required arguments (identical character count, ~3% fewer tokens on every tokenizer
@@ -83,7 +91,8 @@ export type MapStyle =
   | "nocode"
   | "grouped"
   | "compact"
-  | "optional";
+  | "optional"
+  | "explicit";
 
 export type CompressOptions = {
   level?: Level;
