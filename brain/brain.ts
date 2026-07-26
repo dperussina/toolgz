@@ -8,7 +8,10 @@
  *
  *   ./brain/brain.ts init
  *   ./brain/brain.ts task add "title" --spec=001-core --detail="…"
- *   ./brain/brain.ts task done 3
+ *   ./brain/brain.ts task done 3 --evidence="commit abc1234; bench/fixtures/…"
+ *   ./brain/brain.ts task note 3 --text="…"
+ *   ./brain/brain.ts task edit 3 --detail="…" --spec=002
+ *   ./brain/brain.ts task show 3
  *   ./brain/brain.ts tasks
  *   ./brain/brain.ts decide "title" --decision="…" --rationale="…" --evidence=sweep:…
  *   ./brain/brain.ts decisions
@@ -24,9 +27,37 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = resolve(HERE, "../brain.db");
 const SCHEMA = resolve(HERE, "schema.sql");
 
+/**
+ * Additive migrations, applied on every open right after schema.sql.
+ *
+ * Every statement is `IF NOT EXISTS`, so this is idempotent: running it against
+ * a fresh database and against one already holding real rows both converge on
+ * the same shape, and nothing is ever rewritten or dropped. That is the same
+ * discipline schema.sql uses, which is what makes re-entering the init path on
+ * a live DB safe.
+ *
+ * `task_notes` is a child table rather than extra columns on `tasks` precisely
+ * because an accountability ledger must accumulate. One task can collect many
+ * notes over months — evidence on close, a correction, a pointer to a sweep —
+ * and a single column would force each new fact to destroy the last one.
+ */
+const MIGRATIONS = `
+CREATE TABLE IF NOT EXISTS task_notes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL DEFAULT 'note'
+             CHECK (kind IN ('note','evidence','detail')),
+  text       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes(task_id);
+`;
+
 function open(): DatabaseSync {
   const db = new DatabaseSync(DB_PATH);
   db.exec(readFileSync(SCHEMA, "utf8"));
+  db.exec(MIGRATIONS);
   return db;
 }
 
@@ -48,6 +79,30 @@ function table(rows: any[]): void {
   for (const r of rows) console.log(line(cols.map((c) => String(r[c] ?? ""))));
 }
 
+/** Resolve `<id>` from the first positional arg, failing loudly on a typo. */
+function taskId(db: DatabaseSync, raw: string | undefined): number {
+  const id = Number(raw);
+  if (!raw || !Number.isInteger(id))
+    throw new Error(`expected a task id, got ${JSON.stringify(raw ?? null)}`);
+  const hit = db.prepare("SELECT id FROM tasks WHERE id=?").get(id);
+  if (!hit) throw new Error(`no such task: #${id}`);
+  return id;
+}
+
+/** Append-only. Nothing in here is ever updated or deleted by the CLI. */
+function note(
+  db: DatabaseSync,
+  taskIdent: number,
+  kind: "note" | "evidence" | "detail",
+  text: string,
+): void {
+  db.prepare("INSERT INTO task_notes (task_id,kind,text) VALUES (?,?,?)").run(
+    taskIdent,
+    kind,
+    text,
+  );
+}
+
 const [, , cmd, sub, ...rest] = process.argv;
 const db = open();
 
@@ -64,6 +119,50 @@ switch (cmd) {
         .prepare("INSERT INTO tasks (spec,title,detail) VALUES (?,?,?)")
         .run(flag("spec") ?? null, title, flag("detail") ?? null);
       console.log(`#${r.lastInsertRowid} ${title}`);
+    } else if (sub === "note") {
+      // Notes APPEND, always. A note is a fact that was true at a point in
+      // time; overwriting one destroys the record the ledger exists to keep.
+      const text = flag("text");
+      if (!text) throw new Error('task note <id> --text="…"');
+      const id = taskId(db, rest[0]);
+      note(db, id, "note", text);
+      console.log(`#${id} + note`);
+    } else if (sub === "edit") {
+      // `detail` is the task's current summary, so it has to be able to become
+      // accurate — an in_progress task whose detail says "xAI outstanding"
+      // after the sweep moved past it is misinformation, not history. So edit
+      // REPLACES the field, but copies the superseded value into task_notes
+      // first. Overwrite with archival: the current view stays true, and the
+      // old wording is still recoverable via `task show`. Nothing is lost.
+      const detail = flag("detail");
+      const spec = flag("spec");
+      if (detail === undefined && spec === undefined)
+        throw new Error('task edit <id> --detail="…" and/or --spec=…');
+      const id = taskId(db, rest[0]);
+      if (detail !== undefined) {
+        const prev = (
+          db.prepare("SELECT detail FROM tasks WHERE id=?").get(id) as any
+        ).detail as string | null;
+        if (prev && prev !== detail) note(db, id, "detail", prev);
+        db.prepare("UPDATE tasks SET detail=? WHERE id=?").run(detail, id);
+      }
+      if (spec !== undefined)
+        db.prepare("UPDATE tasks SET spec=? WHERE id=?").run(spec, id);
+      console.log(
+        `#${id} edited${detail !== undefined ? " (previous detail archived)" : ""}`,
+      );
+    } else if (sub === "show") {
+      const id = taskId(db, rest[0]);
+      const row = db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as any;
+      table(Object.entries(row).map(([field, value]) => ({ field, value })));
+      console.log("\n── notes ──");
+      table(
+        db
+          .prepare(
+            "SELECT id,kind,text,created_at FROM task_notes WHERE task_id=? ORDER BY id",
+          )
+          .all(id) as any[],
+      );
     } else if (["start", "done", "block", "drop"].includes(sub ?? "")) {
       const map: Record<string, string> = {
         start: "in_progress",
@@ -71,15 +170,28 @@ switch (cmd) {
         block: "blocked",
         drop: "dropped",
       };
-      const id = Number(rest[0]);
-      db.prepare("UPDATE tasks SET status=?, blocked_on=? WHERE id=?").run(
-        map[sub!],
-        flag("on") ?? null,
-        id,
-      );
-      console.log(`#${id} → ${map[sub!]}`);
+      const id = taskId(db, rest[0]);
+      // --evidence is accepted on every transition, not just done: "why this is
+      // blocked" and "why this was dropped" are exactly as load-bearing as
+      // "what closed it", and they are the entries most often lost to chat.
+      const evidence = flag("evidence");
+      if (evidence) note(db, id, "evidence", `${map[sub!]}: ${evidence}`);
+      // `blocked_on` is only written when --on is given, and cleared only by
+      // unblocking. It used to be set to `flag("on") ?? null` on every
+      // transition, so `task done <id>` silently erased a recorded reason —
+      // the same quiet data loss the note/evidence work above exists to stop.
+      const on = flag("on");
+      if (on !== undefined) {
+        db.prepare("UPDATE tasks SET status=?, blocked_on=? WHERE id=?").run(map[sub!], on, id);
+      } else if (sub === "block") {
+        db.prepare("UPDATE tasks SET status=? WHERE id=?").run(map[sub!], id);
+      } else {
+        // Leaving `blocked` clears the reason; it no longer describes the task.
+        db.prepare("UPDATE tasks SET status=?, blocked_on=NULL WHERE id=?").run(map[sub!], id);
+      }
+      console.log(`#${id} → ${map[sub!]}${evidence ? " + evidence" : ""}`);
     } else {
-      console.log("task add|start|done|block|drop");
+      console.log("task add|note|edit|show|start|done|block|drop");
     }
     break;
   }
@@ -198,7 +310,8 @@ switch (cmd) {
 
   default:
     console.log(
-      "usage: brain init | task … | tasks | decide … | decisions | ingest <file> | report",
+      "usage: brain init | task add|note|edit|show|start|done|block|drop … | tasks | " +
+        "decide … | decisions | ingest <file> | report",
     );
 }
 
