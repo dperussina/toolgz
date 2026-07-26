@@ -83,8 +83,10 @@ committed in [`bench/results/`](bench/results/); recompute any figure with
 
 **The table below uses a synthetic catalogue** — 100 realistic-but-invented MCP-style
 tools across 9 namespaces — because it lets us build deliberately confusable clusters
-that a real catalogue may not contain. Two things follow from that, and the first is
-uncomfortable:
+that a real catalogue may not contain. Four of the five scenarios draw a 30-tool
+confusable subset from it; the fifth (`acc-haystack`) uses all 100.
+
+Two things follow from that, and the first is uncomfortable:
 
 - Synthetic naming can flatter a compression style. One map style measured −21% on
   this fixture because every tool name carried a `namespace_op` prefix to factor out.
@@ -211,13 +213,17 @@ the tool name that compression takes away.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/reliability-dark.svg">
-  <img src="docs/img/reliability-light.svg" alt="Task completion by level-3 map style and provider, showing bare names failing on grok-4.5">
+  <img src="docs/img/reliability-light.svg" alt="Task completion by level-3 map style and provider. Bare names fail on grok-4.5; that style and the terse-description style were removed in 0.2.0 and are marked as such">
 </picture>
 
 The model doesn't lose the ability to choose — it converts a recall problem into a retrieval
 problem and looks up what it needs. The default map style exists because of the red cell:
 bare tool names failed on `grok-4.5` **deterministically**, 3 of 3 attempts on one scenario,
 answering with zero tool calls and no error raised. Naming the required arguments fixed it.
+
+Two of the four rows are marked **(removed)**: those styles were deleted in 0.2.0 and you
+cannot select them. They are charted anyway because they *are* the evidence for the
+default — deleting the losing arms would delete the reason.
 
 ### How we found the cost story, and got it wrong twice
 
@@ -247,6 +253,11 @@ tried and removed in 0.2.0 because they were smaller and still worse.
 ## Which level to use
 
 ### The whole idea, in plain English
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/metaphor-dark.svg">
+  <img src="docs/img/metaphor-light.svg" alt="Three panels. Level 0: the full menu, 149 tools on the wire, nothing saved, kitchen checks the order. Level 1: the same menu with prose cut, 149 tools on the wire, 45.2% smaller, kitchen still checks the order. Level 3: a small numbered card and one waiter, 2 tools on the wire, 96.5% smaller, toolgz checks the order instead of the provider.">
+</picture>
 
 Your tool definitions are a **menu** handed to the model at the start of every single
 conversation. It is long, and most of it is flowery prose about each dish.

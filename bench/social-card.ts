@@ -171,7 +171,7 @@ ${bars}
 
   <line x1="${PAD}" y1="558" x2="${rightEdge}" y2="558" stroke="${t.track}" stroke-width="1"/>
   <text x="${PAD}" y="583" font-family="${FONT}" font-size="14" font-weight="600" fill="${t.ink}">60/60 tasks completed · 0 hallucinated tool names · 0 malformed arguments</text>
-  <text x="${PAD}" y="603" font-family="${FONT}" font-size="12" fill="${t.muted}">${esc(rows.map((r) => r.model).join(" · "))} · reasoning at high effort · level 1 (the default) saves 13–39%</text>
+  <text x="${PAD}" y="603" font-family="${FONT}" font-size="12" fill="${t.muted}">${esc(rows.map((r) => r.model).join(" · "))} · reasoning at high effort · level 1 (the default) saves 13–39% on real-world tool definitions</text>
   <text x="${rightEdge}" y="583" text-anchor="end" font-family="${MONO}" font-size="13" fill="${t.secondary}">github.com/dperussina/toolgz</text>
   <text x="${rightEdge}" y="603" text-anchor="end" font-family="${FONT}" font-size="12" fill="${t.muted}">Apache-2.0 · zero runtime dependencies</text>
 </svg>`;

@@ -205,7 +205,7 @@ function chartReduction(rows: Row[], t: Theme): string {
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
     `<text x="${padX}" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Prompt tokens saved vs. uncompressed tool definitions</text>`,
     wrapText(
-      "Higher is better. Same 5 tool-selection tasks, 30 confusable tools, 3 reps per arm. \u2713 marks the shipped default.",
+      "Higher is better. Same 5 tool-selection tasks, 3 reps per arm \u2014 four use a 30-tool confusable subset, the fifth the full 100-tool catalogue. \u2713 marks the shipped default.",
       padX, 52, W - padX * 2, 12.5, t.ink2,
     ),
   );
@@ -279,7 +279,18 @@ function chartReduction(rows: Row[], t: Theme): string {
 
 // ── chart 2: reliability of the level-3 map styles ─────────────────────────
 function chartReliability(rows: Row[], t: Theme): string {
+  /**
+   * The deliberate exception to ARM_ORDER, which excludes removed styles so the charts
+   * cannot advertise an option a reader has no way to select.
+   *
+   * This chart's whole finding is *about* the removed arms: it is the evidence for why
+   * the default names its required arguments. Dropping them would delete the argument.
+   * So they are charted and suffixed "(removed)" — shown as history, not offered as a
+   * choice. Note the marker is NOT a dagger: in chartReduction † already means "did not
+   * complete every task", and one symbol cannot carry two meanings across the same README.
+   */
   const styles = ["minified", "minified-terse", "minified-plus", "minified-sig"];
+  const REMOVED = new Set(["minified", "minified-terse"]);
   const providers = ["anthropic", "gemini", "openai", "xai"];
   const W = 760;
   const cell = 64;
@@ -291,7 +302,7 @@ function chartReliability(rows: Row[], t: Theme): string {
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
     `<text x="20" y="30" font-family="${FONT}" font-size="17" font-weight="600" fill="${t.ink}">Bare tool names are not always enough signal to dispatch</text>`,
     wrapText(
-      "Tasks completed, 15 per cell. Every style saves roughly the same tokens, so reliability is what separates them. The shipped default has never failed; the bare-name map is the only one that has.",
+      "Tasks completed, 15 per cell. Every style saves roughly the same tokens, so reliability is what separates them. The shipped default has never failed; the bare-name map is the only one that has. The two marked (removed) were deleted from the library in 0.2.0 \u2014 they are shown because they are the evidence for that decision.",
       20, 52, W - 40, 12.5, t.ink2,
     ),
   ];
@@ -305,7 +316,7 @@ function chartReliability(rows: Row[], t: Theme): string {
   styles.forEach((arm, j) => {
     const y = 104 + j * rowH;
     parts.push(
-      `<text x="${labelW}" y="${y + 20}" font-family="${FONT}" font-size="12.5" fill="${t.ink2}" text-anchor="end">${esc(ARM_LABEL[arm] ?? arm)}</text>`,
+      `<text x="${labelW}" y="${y + 20}" font-family="${FONT}" font-size="12.5" fill="${REMOVED.has(arm) ? t.muted : t.ink2}" text-anchor="end">${esc(ARM_LABEL[arm] ?? arm)}${REMOVED.has(arm) ? " (removed)" : ""}</text>`,
     );
     providers.forEach((p, i) => {
       const rs = rows.filter((r) => r.provider === p && r.arm === arm);
