@@ -9,7 +9,10 @@
     "bench": "tsx bench/harness/run.ts",
     "build": "tsc",
     "prepublishOnly": "npm run build && npm test",
-    "test:live": "vitest run tests/integration"
+    "test:live": "vitest run tests/integration",
+    "bench:tier1": "tsx -r dotenv/config bench/harness/run-multi.ts --provider=all --suite=real --variants --reps=1 --scenario=real-daily-vs-weekly,real-overwrite-vs-append,real-status-vs-result,real-rollup-vs-detail",
+    "bench:tier2": "tsx -r dotenv/config bench/harness/run-multi.ts --provider=all --suite=real --variants --reps=2 --scenario=real-daily-vs-weekly,real-overwrite-vs-append,real-status-vs-result,real-rollup-vs-detail,real-two-step-scheduling,real-summary-vs-details",
+    "bench:tier3": "tsx -r dotenv/config bench/harness/run-multi.ts --provider=all --suite=real --variants --reps=3"
   },
   "keywords": [
     "llm",

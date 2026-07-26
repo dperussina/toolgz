@@ -159,8 +159,26 @@ encoding for a tokenizer wants a tokenizer, and `tiktoken` et al are native. Kee
 that work in `bench/` as a devDependency, or use the providers' `count_tokens`
 endpoints. It must never reach `src/`.
 
+### Escalate through the tiers; never skip to tier 3
+
 ```bash
-npm test          # 71 unit tests, no network
+npm run bench:tier1   # 4 hardest scenarios x 1 rep x 4 providers  ~$3   kills broken ideas
+npm run bench:tier2   # 6 scenarios x 2 reps x 4 providers         ~$8   kills marginal ones
+npm run bench:tier3   # all 12 scenarios x 3 reps x 4 providers    ~$25  promotes a default
+```
+
+**Cut scenarios, cut reps, never cut providers.** Every failure found so far has been
+provider-specific and unpredictable by reasoning: bare names died only on grok-4.5,
+`grouped` died only on gpt-5.6-sol. A cheap single-provider screen is how you ship a
+broken default; all four providers on four scenarios costs a few dollars and catches
+it in the first reps.
+
+These exist as scripts because the rule was written down as a decision and then
+broken the same day, by launching a 384-run tier-3 sweep containing a brand-new,
+behaviourally untested map style. A guideline you have to remember is not a control.
+
+```bash
+npm test          # unit tests, no network
 npm run build     # tsc → dist/ with .d.ts
 npm run bench     # the sweep — COSTS MONEY, ~$4-8 per full run
 npm run brain     # brain CLI
