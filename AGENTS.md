@@ -1,6 +1,12 @@
 # AGENTS.md — ToolCompression
 
-Operating instructions for AI agents working in this repo. Read before touching code.
+Operating instructions for AI agents working **on** this repo. Read before touching code.
+
+> **Wrong file?** If you are *using* toolgz in another project rather than developing it,
+> read [`llms.txt`](llms.txt) instead — integration instructions for a consuming agent,
+> shipped in the npm package at `node_modules/toolgz/llms.txt`. Different audience, and in
+> places opposite rules: this file governs how to change the library, that one governs how
+> to call it.
 
 ---
 
