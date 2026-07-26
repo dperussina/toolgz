@@ -344,7 +344,7 @@ async function main() {
     "provider's own endpoint.",
     "",
     "See [RESULTS.md](RESULTS.md) for measured token, accuracy, latency and cost",
-    "figures across four providers, and [GUIDE.md](GUIDE.md) for how to wire it up.",
+    "figures across four providers, and the README for how to wire it up.",
   );
 
   const md = out.join("\n") + "\n";

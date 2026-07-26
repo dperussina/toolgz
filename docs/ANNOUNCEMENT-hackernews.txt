@@ -1,18 +1,19 @@
-Wire an agent to a few MCP servers and tool definitions eat your context window before the user says anything. Each tool is a JSON Schema with a sentence of prose per parameter; ~420 tokens each is normal. Fifty tools is 20k tokens at the front of every request. Prompt caching makes those tokens cheap, but it doesn't make them take up less room.
+Wire an agent to a few MCP servers and tool definitions eat your context window before the user says anything. Each tool is a JSON Schema with a sentence of prose per parameter; ~420 tokens each is normal. Fifty tools is 20k tokens; a real 149-tool catalogue measured 68,494. Prompt caching makes those tokens cheap, but it doesn't make them take up less room.
 
 toolgz compresses that block and translates the model's calls back, so your dispatcher receives the same tool name and arguments it did before:
 
-  const c = compress(myTools)
+  const { level } = recommendLevel(myTools)
+  const c = compress(myTools, { level })
   const { tools, system } = forAnthropic(c)
 
   const r = c.resolve(name, input)
   if (r.kind === "call") dispatch(r.name, r.args)
 
-I expected this to fail. The aggressive level replaces github_search_issues with "a0" and puts a lookup table in the cached system prompt, and my prior was that stripping the semantic name would wreck tool selection. So I built the benchmark to catch that: deliberately confusable clusters, search_issues vs list_issues, approve vs merge, three products with identically-shaped tools side by side.
+I expected this to fail. The aggressive level replaces github_search_issues with "a0" and puts a lookup table in the cached system prompt, and my prior was that stripping the semantic name would wreck tool selection. So I built the benchmark to catch that: deliberately confusable clusters, search_issues vs list_issues, approve vs merge.
 
 It didn't fail. 420 runs across claude-opus-5, gpt-5.6-sol, gemini-3.1-pro-preview and grok-4.5, reasoning enabled at high effort:
 
-- Prompt tokens: -71% to -85%
+- Prompt tokens: -71% to -85% at level 3 (-13% to -32% at the safe default)
 - Tool-definition block: -79% to -88%
 - Cost: -7% to -78%
 - Latency: faster than uncompressed on all four
@@ -22,7 +23,7 @@ The model seems to convert a recall problem into a retrieval problem. It doesn't
 
 Three things I'd want to know if I were reading this.
 
-1. My first cross-provider run made OpenAI 15% *more* expensive. Context fell 69% but the bill rose, because the dispatcher burned extra turns, and on a reasoning model every turn pays for a fresh round of thinking. So I made the harness record the calls being rejected. Three bugs, all mine: models pass "query" to a parameter named "q" (14 of 18 rejections), they sometimes call the map code as the tool name, and they sometimes pass arguments flat instead of nested. Fixing those took OpenAI from +15% to -7% and drove malformed arguments to zero on all four providers.
+1. My first cross-provider run made OpenAI 15% *more* expensive. Context fell 69% but the bill rose, because the dispatcher burned extra turns and on a reasoning model every turn pays for a fresh round of thinking. So I made the harness record the calls being rejected. Three bugs, all mine: models pass "query" to a parameter named "q" (14 of 18 rejections), they call the map code as the tool name, and they pass arguments flat instead of nested. Fixing those drove malformed arguments to zero on all four providers.
 
 Cost still isn't the headline. OpenAI's -7% is the smallest because reasoning output dominates its bill, so a smaller prompt moves the total less. The claim is context-window occupancy; cost follows by a variable amount.
 

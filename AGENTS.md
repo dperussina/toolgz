@@ -20,42 +20,33 @@ reclamation is the product.
 
 ---
 
-## Status: both phases complete
+## Status: shipped, and still being measured
 
-**Phase 1 — the experiment: DONE.** 150 runs, Opus 5, $7.72. Results in `docs/RESULTS.md`,
-raw data in `bench/results/*.jsonl`, aggregates in `brain.db`.
+Published as `toolgz` on npm — 0.2.0 at the time of writing. 245 tests, clean typecheck,
+zero runtime dependencies.
 
-**Phase 2 — the library: DONE.** `src/`, 71 tests passing, clean typecheck, publish-ready
-`package.json`.
+Six benchmark rounds so far; `docs/RESULTS.md` is the evidence log and the only place
+figures live. **Do not restate a number in another document** — that is how the README
+came to advertise level 3's savings beside a level-1 code example. Link to RESULTS
+instead.
 
-Do not re-run the sweep to "check" it. The aggregates in `docs/RESULTS.md` have been
-independently recomputed from the raw JSONL and reproduce exactly.
+Do not re-run an old sweep to "check" it. Every figure is recomputable from the
+committed JSONL with `npx tsx bench/analyze-multi.ts --sweep=<timestamp>`.
 
 ### What the experiment found
 
-| Arm | Tool block | Avg prompt | Malformed args | Cost |
-|---|---:|---:|---:|---:|
-| `control` | 10,035 | 41,336 | 0 | $1.86 |
-| `signatures` (L1) | 7,322 | 30,475 | 0 | $1.54 |
-| `native` (Anthropic) | 1,644 | 16,430 | 0 | $2.19 |
-| `hybrid` (L2) | 2,086 | 13,560 | 12 | $1.27 |
-| `minified` (L3) | **1,146** | **7,432** | 2 | **$0.86** |
+Headline results live in `docs/RESULTS.md` and are deliberately not duplicated here.
+The four findings that should not be relitigated without new data:
 
-All arms: 48/48 tool calls correct, 0 hallucinated names, 150/150 tasks succeeded.
-
-Four findings that should not be relitigated without new data:
-
-1. **Name minification did not cost accuracy.** The central design worry — that `a3` instead
-   of `github_search_issues` would destroy semantic retrieval — did not reproduce, even on
-   clusters purpose-built to break it. The model converts recall into retrieval, spending
-   ~1.7 lookups and ~0.6 extra turns. *One model, one catalogue — see the caveats.*
-2. **Schema flattening (L1) is free.** −26% prompt tokens, zero malformed args, zero extra
-   turns, latency slightly better than control. This is the default.
-3. **L2 is dominated.** Worse than L3 on every axis, with 6× the malformed args. It stays in
-   the API for callers who need real op names on the wire; it is not a stepping stone to L3.
-4. **Native tool search costs more money than not compressing** ($2.19 vs $1.86) — server-side
-   search runs its own billed inference. Tokens and dollars are separate axes. The library
-   *composes* with native search rather than competing with it.
+1. **Name minification did not cost accuracy.** The central worry — that `a3` instead of
+   `github_search_issues` would destroy semantic retrieval — did not reproduce, even on
+   clusters purpose-built to break it. The model converts recall into retrieval.
+2. **Level 1 is free**: fewer tokens, zero malformed arguments, zero extra turns. It is
+   the default, and it saves 13–32%. The 71–85% figures are level 3.
+3. **Level 2 is dominated by level 3** on every axis, with more malformed arguments.
+4. **Turns dominate map size.** One extra turn is worth ~3,300 prompt tokens; the best
+   encoding change available was worth ~550. Six map styles were tried and removed in
+   0.2.0 because they were smaller and still worse.
 
 ### What is still unmeasured
 

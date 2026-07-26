@@ -15,7 +15,7 @@ Three independent experiments have now produced the **same provider split**:
 |---|---|---|---|---|
 | generated cheat sheet | lookups 0.50 → **0.00** | worse | worse | worse |
 | `mapStyle: "explicit"` | cost **−39%** | cost **−16%** | **+13%** | **+31%** |
-| `mapStyle: "nocode"` (occupancy) | −15.2% | −15.5% | −11.6% | −12.2% |
+| `mapStyle: "nocode"` (occupancy) *(removed in 0.2.0)* | −15.2% | −15.5% | −11.6% | −12.2% |
 
 **Gemini and OpenAI reward added map information. Anthropic and xAI do not.**
 Anthropic issues ~2 lookups per run regardless of what the map says; xAI issues
@@ -79,7 +79,7 @@ Case 2 is the owner's explicit choice over honour-with-a-warning.
 ```ts
 compress(tools, { model: "gemini-3.1-pro-preview" })                    // best occupancy
 compress(tools, { model: "gemini-3.1-pro-preview", objective: "cost" }) // -39%: explicit
-compress(tools, { mapStyle: "grouped" })                               // you asked, you get it
+compress(tools, { mapStyle: "signature" })                              // you asked, you get it
 compress(tools)                                                        // unchanged
 ```
 

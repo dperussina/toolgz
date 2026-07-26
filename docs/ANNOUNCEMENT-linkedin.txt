@@ -2,22 +2,23 @@ Your AI agent burns 30,000 tokens before the user types a single word.
 
 Not on thinking. Not on answering. On tool definitions — the JSON schemas that describe what it's allowed to do.
 
-Wire up a few MCP servers and that's 30–50k tokens sitting at the front of every single request, forever.
+Wire up a few MCP servers and that's 30–70k tokens sitting at the front of every single request, forever.
 
 Prompt caching makes those tokens cheap. It doesn't give you the room back.
 
 So I built toolgz, and it's on npm as of today.
 
-Adopting it is two lines:
+Adopting it is three lines:
 
-const c = compress(myTools)
+const { level } = recommendLevel(myTools)
+const c = compress(myTools, { level })
 const { tools, system } = forAnthropic(c)
 
 Send those instead of your tool array. When the model calls something, c.resolve() hands you back the real tool name and the real arguments — so your dispatcher receives exactly what it received before. Nothing downstream changes.
 
 Measured on Claude, GPT, Gemini and Grok, reasoning enabled at high effort:
 
-→ 71–85% fewer prompt tokens
+→ 71–85% fewer prompt tokens (at level 3, on a large tool set)
 → Faster on all four
 → 60/60 tasks completed
 → Zero hallucinated tool names, zero malformed arguments

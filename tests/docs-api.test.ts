@@ -15,7 +15,20 @@ import { compress } from "../src/index.js";
 import type { Tool } from "../src/types.js";
 
 const VALID_STYLES = ["name+required", "explicit", "signature"];
-const DOCS = ["README.md", ...readdirSync("docs").filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`)];
+// Includes specs/, because a stale `mapStyle: "grouped"` example survived there while
+// README and docs/ were clean — the guard has to cover everywhere prose lives.
+const DOCS = [
+  "README.md",
+  "AGENTS.md",
+  ...readdirSync("docs").filter((f) => f.endsWith(".md") || f.endsWith(".txt")).map((f) => `docs/${f}`),
+  ...readdirSync("specs", { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .flatMap((d) =>
+      readdirSync(`specs/${d.name}`)
+        .filter((f) => f.endsWith(".md"))
+        .map((f) => `specs/${d.name}/${f}`),
+    ),
+];
 const read = (f: string) => readFileSync(f, "utf8");
 
 /** A line is exempt if it is explicitly marked as historical. */
@@ -41,6 +54,38 @@ describe("documented map styles all exist", () => {
       if (isHistorical(read(file))) continue;
       expect(read(file).includes("cheatSheet"), file).toBe(false);
     }
+  });
+});
+
+describe("documented counts are not stale", () => {
+  it("no doc claims a test count that is not the real one", () => {
+    // AGENTS.md said 71 and the README said 131 while the suite was at 239. A number
+    // that only a human updates is a number that goes stale.
+    const offenders: string[] = [];
+    for (const file of DOCS) {
+      for (const m of read(file).matchAll(/(\d+)\s+(?:unit\s+)?tests\b/g)) {
+        const claimed = Number(m[1]);
+        // Allow only a plausible current figure; anything far off is stale.
+        if (claimed < 200 || claimed > 400) offenders.push(`${file}: "${m[0]}"`);
+      }
+    }
+    expect(offenders, `stale test counts:\n  ${offenders.join("\n  ")}`).toEqual([]);
+  });
+
+  it("no doc claims a version below the current major.minor", () => {
+    const pkg = JSON.parse(read("package.json"));
+    const [maj, min] = pkg.version.split(".").map(Number);
+    const offenders: string[] = [];
+    for (const file of DOCS) {
+      for (const line of read(file).split("\n")) {
+        // Release history and process docs legitimately name old versions.
+        if (/0\.1\.|release|publish|changelog|removed in|superseded/i.test(line)) continue;
+        for (const m of line.matchAll(/\b(\d+)\.(\d+)\.\d+\b/g)) {
+          if (Number(m[1]) === maj && Number(m[2]) < min) offenders.push(`${file}: ${m[0]}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
 

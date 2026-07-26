@@ -190,7 +190,8 @@ So I built toolgz. It's on npm as of today.
 Two lines to adopt it:
 
 ```ts
-const c = compress(myTools);                 // your existing MCP/SDK tool array
+const { level } = recommendLevel(myTools);   // 1 for small sets, 3 for large
+const c = compress(myTools, { level });      // your existing MCP/SDK tool array
 const { tools, system } = forAnthropic(c);   // send these instead
 ```
 
@@ -205,7 +206,7 @@ changes.
 
 **Measured on Claude, GPT, Gemini and Grok — reasoning enabled, high effort:**
 
-→ 71–85% fewer prompt tokens
+→ 71–85% fewer prompt tokens (at level 3, on a large tool set)
 → Faster on all four
 → 60/60 tasks completed
 → Zero hallucinated tool names, zero malformed arguments
