@@ -2,7 +2,7 @@
 
 <p><strong>Your agent spends 30–70k tokens of context on tool definitions before the user types a word. toolgz gets up to ~85% of it back.</strong></p>
 
-<p><em>On a large tool set, at level 3. The default (level 1) reclaims 13–39% and gives up nothing. <code>recommendLevel()</code> tells you which one your tools want; you pass its answer in.</em></p>
+<p><em>On a large tool set, at level 3. The default (level 1) reclaims 13–39% on real-world tool definitions and gives up nothing. <code>recommendLevel()</code> tells you which one your tools want; you pass its answer in.</em></p>
 
 <p>
 <a href="#measured-results">420-run cross-provider sweep</a> ·
@@ -44,7 +44,7 @@ Reclaiming the room is what this does.
 ```ts
 import { compress, recommendLevel, forAnthropic } from "toolgz";
 
-const { level } = recommendLevel(myTools);    // advice: 1 for a small block, 3 for a big one
+const { level } = recommendLevel(myTools);    // advice: 0, 1 or 3 — see below
 const c = compress(myTools, { level });       // your existing MCP/SDK tool array
 const { tools, system } = forAnthropic(c);    // send these instead
 ```
@@ -53,6 +53,11 @@ const { tools, system } = forAnthropic(c);    // send these instead
 provider schema enforcement intact, and 13–39% smaller (13–32% on the synthetic benchmark, 39% on the real 149-tool corpus). The 71–85% figures below are
 **level 3**, which is what `recommendLevel` returns once a tool set is big enough to
 amortise the dispatcher.
+
+Level 1 earns that by stripping prose, so it needs prose to strip: if your descriptions
+are already one short sentence, it **adds** ~15% instead and `recommendLevel` returns
+**0** — leave the tools alone. Real MCP catalogues are verbose, which is why they land at
+the top of that range.
 
 **Note the shape of those three lines: `recommendLevel` only advises, and you pass its
 answer back in.** Nothing upgrades itself — `compress(myTools)` is level 1 whether you
@@ -267,7 +272,7 @@ So: **level 1 is smaller. Level 3 is much smaller and you take over order-checki
 compress(myTools)                    // level 1. ALWAYS — 2 tools or 500.
 compress(myTools, { level: 3 })      // level 3, because you asked for it
 
-const { level } = recommendLevel(myTools);   // just advice: returns 1 or 3
+const { level } = recommendLevel(myTools);   // just advice: returns 0, 1 or 3
 compress(myTools, { level });                // now it's 3, because you passed it in
 ```
 
@@ -297,7 +302,7 @@ saving.
 
 ### The levels in full
 
-Ask the library. It returns 1 or 3, never 2, and explains itself:
+Ask the library. It returns 0, 1 or 3 — never 2 — and explains itself:
 
 ```ts
 import { recommendLevel } from "toolgz";
@@ -964,13 +969,21 @@ Returns:
 > Use it as a local signal. For anything you publish, measure with your provider's token
 > counter. `originalChars` and `compressedChars` are on `stats` for the raw counts.
 >
-> A negative value is possible and correct: on a very small tool set, level 1's signature
-> line can exceed the per-property descriptions it strips.
+> A negative value is possible and correct. Level 1 pays for a signature line and gets
+> paid by the prose it strips, so on tools whose descriptions are already terse it comes
+> out **~15% larger** — `recommendLevel` returns 0 in that case rather than recommending
+> it. Even level 0 reports **−0.6%**: `c.tools` is Anthropic-shaped, and `input_schema` is
+> one character longer than the `inputSchema` most callers pass in. Structural, not waste.
 | `encodeCallForTest(name, args)` | `→ {name, args}` | build the raw call a model would emit; test aid |
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
 
-`{ level, reason, toolCount, namespaceCount, opsPerNamespace }`. Returns 1 or 3, never 2.
+`{ level, reason, toolCount, namespaceCount, opsPerNamespace }`. Returns 0, 1 or 3, never 2.
+
+**`level: 0` means this library has nothing to offer your tool set.** Level 1 would
+inflate it — terse descriptions leave no prose to strip, so the signature line is pure
+addition — and the block is too small for level 3's trade to be worth it. Telling you that
+is more useful than recommending a transform that makes the payload bigger.
 
 **It advises; it does not act.** Pass the answer back in yourself —
 `compress(tools, { level })`. Calling `compress(tools)` alone is level 1 regardless of

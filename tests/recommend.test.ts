@@ -206,3 +206,89 @@ describe("recommendLevel advises; compress() never acts on its own", () => {
     }
   });
 });
+
+describe("it never recommends a level that inflates the payload", () => {
+  /**
+   * An external reviewer measured level 1 at **-15%** across 25 to 1,000 generated
+   * tools — i.e. level 1 made the block bigger — and read that as correct behaviour for
+   * level 1. It is. What was not correct was `recommendLevel` returning 1 anyway.
+   *
+   * Level 1 saves by truncating descriptions to the first sentence and stripping
+   * per-property prose, and spends by prepending a signature line. Give it tools whose
+   * descriptions are already one short sentence with no property prose and there is
+   * nothing to strip, so the signature is pure addition. A recommendation that inflates
+   * the payload is worse than no recommendation, so it now returns 0 and says why.
+   *
+   * Note this is only reachable BELOW the level-3 threshold. Above it, level 3 wins on
+   * size regardless of what level 1 does.
+   */
+  const terse = (n: number): Tool[] =>
+    Array.from({ length: n }, (_, i) => ({
+      name: `svc${i % 10}_op${i}`,
+      description: `Operation ${i}.`,
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" }, limit: { type: "integer" } },
+        required: ["id"],
+      },
+    }));
+
+  it("returns 0 when level 1 would make the block larger", () => {
+    for (const n of [14, 25, 50, 100]) {
+      const r = recommendLevel(terse(n));
+      expect(compress(terse(n), { level: 1 }).stats.savedPct, `${n} tools: precondition`).toBeLessThan(0);
+      expect(r.level, `${n} terse tools`).toBe(0);
+    }
+  });
+
+  it("never returns a level that is worse than doing nothing", () => {
+    /**
+     * The invariant, stated against the right baseline. Not "savedPct >= 0": level 0 is
+     * itself -0.6%, because `c.tools` is Anthropic-shaped and `input_schema` is one
+     * character longer than the `inputSchema` most callers pass in. That is structural,
+     * not waste, so the floor is level 0's own figure rather than zero.
+     *
+     * Any future threshold change must preserve this.
+     */
+    for (const tools of [terse(14), terse(50), terse(400), build(6, 12), build(20, 30)]) {
+      const { level } = recommendLevel(tools);
+      const saved = compress(tools, { level }).stats.savedPct;
+      const doNothing = compress(tools, { level: 0 }).stats.savedPct;
+      expect(saved, `level ${level} saves ${saved}% vs ${doNothing}% for doing nothing`)
+        .toBeGreaterThanOrEqual(doNothing);
+    }
+  });
+
+  it("says the block would get LARGER, and quantifies both alternatives", () => {
+    const r = recommendLevel(terse(50));
+    expect(r.reason).toMatch(/LARGER/);
+    expect(r.reason).toMatch(/level 3 does compress this \(\d+\.\d+%\)/);
+    expect(r.reason).toMatch(/leave the tools alone/i);
+  });
+
+  it("still prefers level 3 over 0 when the block is genuinely large", () => {
+    // Terse tools in bulk: level 1 still inflates, but the block now clears the
+    // threshold, and at that size reclaiming it beats keeping provider validation.
+    const big = terse(400);
+    expect(compress(big, { level: 1 }).stats.savedPct).toBeLessThan(0);
+    expect(recommendLevel(big).level).toBe(3);
+  });
+
+  it("does not change the answer for real MCP tools, which have prose to strip", () => {
+    // The regression guard on the fix: real catalogues must be untouched.
+    const real = JSON.parse(readFileSync("bench/fixtures/real-mcp-tools.json", "utf8")).map(
+      (t: any) => ({ name: t.name, description: t.description, inputSchema: t.input_schema }),
+    );
+    expect(recommendLevel(real.slice(0, 14)).level).toBe(1);
+    expect(recommendLevel(real.slice(0, 40)).level).toBe(3);
+    expect(recommendLevel(real).level).toBe(3);
+    expect(compress(real, { level: 1 }).stats.savedPct).toBeGreaterThan(40);
+  });
+
+  it("the docs state the 0 case, since it changes the documented contract", () => {
+    for (const f of ["README.md", "llms.txt"]) {
+      const doc = readFileSync(f, "utf8");
+      expect(doc, `${f} still says 1 or 3`).toMatch(/0, 1 or 3/);
+    }
+  });
+});

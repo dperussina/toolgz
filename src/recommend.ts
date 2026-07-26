@@ -48,6 +48,11 @@ export type Recommendation = {
  * there unless the caller passes a level explicitly — level 3 trades away the
  * provider's own schema enforcement, and that is not a trade to make on a
  * caller's behalf because their tool array grew.
+ *
+ * Returns 0, 1 or 3 — never 2. **0 means "this library has nothing to offer
+ * here"**: level 1 would inflate the block, and it is too small for level 3's
+ * trade to be worth it. Saying so is more useful than recommending a transform
+ * that makes the payload bigger.
  */
 export function recommendLevel(
   tools: Tool[],
@@ -68,9 +73,8 @@ export function recommendLevel(
   // real MCP tools the ratio is a stable ~2.1 chars/token (1.98 at 10 tools, 2.15 at
   // 149), so dividing gives a fair local estimate with no API call.
   const CHARS_PER_TOKEN = 2.1;
-  const l1Tokens = Math.round(
-    compress(tools, { level: 1 }).stats.compressedChars / CHARS_PER_TOKEN,
-  );
+  const l1 = compress(tools, { level: 1 });
+  const l1Tokens = Math.round(l1.stats.compressedChars / CHARS_PER_TOKEN);
 
   // The old heuristic gated level 3 on `opsPerNamespace >= 4`. That is a LEVEL-2
   // question: level 2 pays dispatcher overhead per namespace, so its shape matters
@@ -92,10 +96,31 @@ export function recommendLevel(
   const THRESHOLD_TOKENS = 10000;
 
   if (l1Tokens < THRESHOLD_TOKENS) {
+    // Level 1 is not unconditionally free, and this function used to assume it was.
+    //
+    // Level 1 saves by truncating each description to its first sentence and stripping
+    // per-property prose from the schema, and it spends by prepending a signature line.
+    // On a real MCP catalogue the prose dominates and it nets ~45%. On tools whose
+    // descriptions are already one short sentence there is nothing to strip, the
+    // signature is pure addition, and level 1 comes out ~15% LARGER than doing nothing.
+    //
+    // Reported by an external reviewer at 25-1,000 generated tools; they read it as
+    // correct behaviour for level 1, which it is. What is not correct is *recommending*
+    // it: a recommendation that inflates the payload is worse than no recommendation.
+    // So say so, and name level 3 as the real alternative rather than implying the
+    // choice is between level 1 and nothing.
+    if (l1.stats.savedPct <= 0) {
+      return {
+        ...base,
+        level: 0,
+        reason: `Level 1 would make this block ${Math.abs(l1.stats.savedPct).toFixed(1)}% LARGER, not smaller — your descriptions are already terse, so there is no prose to strip and level 1's signature line is pure overhead. Leave the tools alone. If you want the room anyway, level 3 does compress this (${compress(tools, { level: 3 }).stats.savedPct.toFixed(1)}%), at the cost of the provider's own argument validation; at ~${l1Tokens.toLocaleString()} tokens that trade is usually not worth it.`,
+      };
+    }
+
     return {
       ...base,
       level: 1,
-      reason: `The tool block is only ~${l1Tokens.toLocaleString()} tokens at level 1. Level 3 would be smaller, but not by enough to be worth giving up the provider's own argument validation, which level 1 keeps. Reach for level 3 when the block is large enough that reclaiming it changes what fits in your context.`,
+      reason: `The tool block is only ~${l1Tokens.toLocaleString()} tokens at level 1, which saves ${l1.stats.savedPct.toFixed(1)}%. Level 3 would be smaller, but not by enough to be worth giving up the provider's own argument validation, which level 1 keeps. Reach for level 3 when the block is large enough that reclaiming it changes what fits in your context.`,
     };
   }
 
