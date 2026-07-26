@@ -205,6 +205,51 @@ trip. A test asserts that file matches the code, so it cannot drift.
 
 ---
 
+## Optional: let the library pick the map style for your model
+
+Level 3 has several map styles. Which one is cheapest turns out to depend on the
+model, so you can hand `compress()` a model id and let it use what was actually
+measured:
+
+```ts
+compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
+```
+
+| Model | Style chosen for `cost` | Measured against the default |
+|---|---|---:|
+| `gpt-5.6-sol` | `explicit` | **−20.7%** |
+| `gemini-3.1-pro-preview` | `explicit` | **−15.4%** |
+| `claude-opus-5` | `explicit` | **−9.0%** |
+| `grok-4.5` | *default* | `explicit` measured **+13.2%** there |
+
+From a 432-run sweep, 36 runs per style per provider, on the real 149-tool corpus.
+`explicit` completed 144/144 tasks and cut lookups on all four providers; only the
+*cost* consequence differs by model. The table lives in
+[`src/policy.generated.ts`](src/policy.generated.ts), is generated from the committed
+results, and a test fails if it drifts from them.
+
+Four things worth knowing:
+
+- **Omitting `model` changes nothing.** Existing behaviour is byte-identical; there
+  is a test asserting that.
+- **`objective` defaults to `occupancy`, which has no table.** Every style we
+  measured landed within ±3.1% of the default on context occupancy — under our 5%
+  effect-size floor — so there is nothing to select. Only `cost` has entries.
+- **An absent model gets the default.** That is an absence of evidence, not a
+  prediction. `gpt-5.6-sol` behaving one way says nothing certain about `gpt-5.7`.
+- **A style measured unsafe on your model is refused**, and `stats.fallbackReason`
+  tells you why rather than substituting silently. Currently one entry: `nocode` on
+  `grok-4.5`, which failed 19% of runs by answering with no tool call at all.
+
+```ts
+const c = compress(myTools, { level: 3, model: "grok-4.5", mapStyle: "nocode" });
+c.stats.mapStyle;         // "name+required" — substituted
+c.stats.requestedMapStyle // "nocode"
+c.stats.fallbackReason    // why, with the run count and sweep
+```
+
+---
+
 ## Documentation
 
 | | |
