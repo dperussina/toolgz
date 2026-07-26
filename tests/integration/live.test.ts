@@ -69,9 +69,27 @@ describe.skipIf(!LIVE)("live round-trip", () => {
       const c = compress(TOOLS, { level });
       const { tools, system } = forAnthropic(c);
       const messages: any[] = [
-        { role: "user", content: "Open a GitHub issue in owner=acme repo=web titled 'Ship it'." },
+        {
+          role: "user",
+          // Worded to leave no room for a defensible variant. "owner=acme repo=web"
+          // used to flake: the model would send repo="acme/web", because GitHub's own
+          // convention is the owner/repo slug. That is schema-valid and the library
+          // translated it faithfully, so the assertion was wrong, not the code —
+          // it pinned a formatting choice the prompt had left open.
+          content:
+            "Open a GitHub issue. The owner argument is exactly the string \"acme\". " +
+            "The repo argument is exactly the string \"web\" — the repo name only, " +
+            "never a combined owner/repo slug. The title is \"Ship it\".",
+        },
       ];
       let dispatched: any = null;
+      // Kept for the failure message. This test asserts real model behaviour on a
+      // single sample, so it flakes (~1 in 8 whole-file runs observed) — and once on
+      // level 0, the passthrough arm, where the tool payload is untouched. That
+      // points at model variance rather than compression, but a bare
+      // `expected null not to be null` cannot tell the two apart, so record enough
+      // to diagnose the next occurrence instead of re-running to guess.
+      const trace: string[] = [];
 
       for (let turn = 0; turn < 6 && !dispatched; turn++) {
         const res: any = await client.messages.create({
@@ -82,10 +100,15 @@ describe.skipIf(!LIVE)("live round-trip", () => {
           messages,
         });
         const calls = res.content.filter((b: any) => b.type === "tool_use");
-        if (!calls.length) break;
+        if (!calls.length) {
+          const said = res.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ");
+          trace.push(`turn ${turn}: no tool_use. stop=${res.stop_reason} text=${JSON.stringify(said.slice(0, 300))}`);
+          break;
+        }
         messages.push({ role: "assistant", content: res.content });
         const results = calls.map((call: any) => {
           const r = c.resolve(call.name, call.input);
+          trace.push(`turn ${turn}: ${call.name}(${JSON.stringify(call.input)}) -> ${r.kind}${r.kind === "error" ? `: ${r.message}` : ""}`);
           if (r.kind === "call") {
             dispatched = r;
             return { type: "tool_result", tool_use_id: call.id, content: '{"number":42}' };
@@ -97,11 +120,16 @@ describe.skipIf(!LIVE)("live round-trip", () => {
         messages.push({ role: "user", content: results });
       }
 
-      expect(dispatched).not.toBeNull();
-      expect(dispatched.name).toBe("github_create_issue");
-      expect(dispatched.args.owner).toBe("acme");
-      expect(dispatched.args.repo).toBe("web");
-      expect(typeof dispatched.args.title).toBe("string");
+      const ctx = `level ${level}, mapStyle ${c.stats.mapStyle ?? "n/a"}\n  ${trace.join("\n  ") || "(no turns recorded)"}`;
+      expect(dispatched, `never reached a dispatch —\n  ${ctx}`).not.toBeNull();
+      expect(dispatched.name, ctx).toBe("github_create_issue");
+      expect(dispatched.args.owner, ctx).toBe("acme");
+      expect(dispatched.args.repo, ctx).toBe("web");
+      // If this fires at level 1-3 it is a library defect: `validate` checks against the
+      // ORIGINAL schema, so a wrong-typed required field should surface as kind:"error",
+      // never as a dispatch. At level 0 nothing is compressed and nothing is validated,
+      // so it only reports what the provider let through.
+      expect(typeof dispatched.args.title, ctx).toBe("string");
     },
     120_000,
   );

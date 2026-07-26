@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { recommendLevel, compress } from "../src/index.js";
 import type { Tool } from "../src/types.js";
 
@@ -131,5 +132,77 @@ describe("recommendLevel sizes the block instead of testing its shape", () => {
       recommendLevel(REAL_TOOLS as any).reason.match(/~([\d,]+) tokens/)![1].replace(/,/g, ""),
     );
     expect(Math.abs(est - 41648) / 41648).toBeLessThan(0.05);
+  });
+});
+
+describe("recommendLevel advises; compress() never acts on its own", () => {
+  /**
+   * A reader of the README asked whether the library "upgrades to level 3
+   * automatically if they have a lot of tools." It does not, and the docs at the time
+   * invited the reading: the quick start commented `// 1 for small sets, 3 for large
+   * ones` on a line that merely *computes* a number, and example 01 called it
+   * "let the library pick."
+   *
+   * The behaviour is deliberate — level 3 gives up provider-side schema enforcement,
+   * so upgrading silently because a caller's tool array grew would change their
+   * correctness guarantees behind their back. But it is only safe as a default if it
+   * is loudly documented, so these tests pin the behaviour AND the prose together.
+   */
+  const bigBlock: Tool[] = Array.from({ length: 300 }, (_, i) => ({
+    name: `svc${i % 9}_operation_number_${i}`,
+    description: `Operation ${i}. ${"Prose the model does not need to choose correctly. ".repeat(4)}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "The thing to act on." },
+        limit: { type: "integer", description: "How many results." },
+      },
+      required: ["target"],
+    },
+  }));
+
+  it("stays at level 1 on a block big enough to be recommended level 3", () => {
+    expect(recommendLevel(bigBlock).level, "precondition: this block wants level 3").toBe(3);
+    expect(compress(bigBlock).stats.level, "compress() must not follow the advice by itself").toBe(1);
+  });
+
+  it("reaches level 3 only when the caller passes the advice back in", () => {
+    const { level } = recommendLevel(bigBlock);
+    expect(compress(bigBlock, { level }).stats.level).toBe(3);
+  });
+
+  it("leaves a real saving unclaimed, which is the cost of the guarantee", () => {
+    // Not a defect to fix — the number is here so the trade stays visible, and so
+    // anyone tempted to make compress() self-select sees what they would be buying.
+    expect(compress(bigBlock, { level: 3 }).stats.savedPct).toBeGreaterThan(
+      compress(bigBlock).stats.savedPct + 20,
+    );
+  });
+
+  it("the default holds at every size, so there is no hidden cliff", () => {
+    for (const n of [1, 2, 15, 50, 150, 500]) {
+      expect(compress(bigBlock.slice(0, n)).stats.level, `${n} tools`).toBe(1);
+    }
+  });
+
+  it("the README says so, in the quick start and the API reference", () => {
+    const readme = readFileSync("README.md", "utf8");
+    // The quick start must not imply the call itself chooses.
+    expect(readme).not.toMatch(/recommendLevel\(myTools\);\s*\/\/\s*1 for small sets/);
+    expect(readme).toMatch(/only advises|advises; it does not act|advises, it does\s*\n?not act/i);
+    // And the size-not-count basis must be stated, since that was the other half of
+    // the misreading.
+    expect(readme).toMatch(/how \*big\* the block is, not how \*many\*/);
+  });
+
+  it("no doc still describes the removed tools-per-namespace gate as current", () => {
+    for (const f of ["README.md", "src/recommend.ts"]) {
+      const lines = readFileSync(f, "utf8").split("\n");
+      lines.forEach((line, i) => {
+        if (!/threshold is driven by tools-per-namespace/.test(line)) return;
+        const context = lines.slice(Math.max(0, i - 3), i + 3).join(" ");
+        expect(/earlier version|old heuristic|used to|no longer/i.test(context), `${f}:${i + 1}`).toBe(true);
+      });
+    }
   });
 });

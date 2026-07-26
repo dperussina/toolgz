@@ -2,7 +2,7 @@
 
 <p><strong>Your agent spends 30–70k tokens of context on tool definitions before the user types a word. toolgz gets up to ~85% of it back.</strong></p>
 
-<p><em>On a large tool set, at level 3. The safe default (level 1) reclaims 13–39% and gives up nothing — <code>recommendLevel()</code> picks for you.</em></p>
+<p><em>On a large tool set, at level 3. The default (level 1) reclaims 13–39% and gives up nothing. <code>recommendLevel()</code> tells you which one your tools want; you pass its answer in.</em></p>
 
 <p>
 <a href="#measured-results">420-run cross-provider sweep</a> ·
@@ -33,7 +33,7 @@ Reclaiming the room is what this does.
 ```ts
 import { compress, recommendLevel, forAnthropic } from "toolgz";
 
-const { level } = recommendLevel(myTools);    // 1 for small sets, 3 for large ones
+const { level } = recommendLevel(myTools);    // advice: 1 for a small block, 3 for a big one
 const c = compress(myTools, { level });       // your existing MCP/SDK tool array
 const { tools, system } = forAnthropic(c);    // send these instead
 ```
@@ -41,7 +41,11 @@ const { tools, system } = forAnthropic(c);    // send these instead
 `compress(myTools)` with no `level` gives you **level 1** — safe, native tool calling,
 provider schema enforcement intact, and 13–39% smaller (13–32% on the synthetic benchmark, 39% on the real 149-tool corpus). The 71–85% figures below are
 **level 3**, which is what `recommendLevel` returns once a tool set is big enough to
-amortise the dispatcher. Ask for it explicitly with `{ level: 3 }` if you prefer.
+amortise the dispatcher.
+
+**Note the shape of those three lines: `recommendLevel` only advises, and you pass its
+answer back in.** Nothing upgrades itself — `compress(myTools)` is level 1 whether you
+have 2 tools or 500. See [Which level to use](#which-level-to-use) for why.
 
 Then translate the model's call back before you dispatch:
 
@@ -226,6 +230,62 @@ tried and removed in 0.2.0 because they were smaller and still worse.
 
 ## Which level to use
 
+### The whole idea, in plain English
+
+Your tool definitions are a **menu** handed to the model at the start of every single
+conversation. It is long, and most of it is flowery prose about each dish.
+
+- **Level 1** — the same menu with the prose cut. It is still a real menu: the model
+  points at a dish **by name**, and *the kitchen checks the order makes sense* before
+  cooking. This is the default, and it gives up nothing.
+- **Level 3** — throw the menu away. Hand the model a **numbered list** and one waiter.
+  It says "number 12, no onions," and the waiter knows what that means. The list is
+  tiny. But the kitchen no longer checks the order — **toolgz checks it instead**,
+  against your original schema, and hands back a readable error if it's wrong.
+
+If the model needs to know what number 12 comes with, it asks. That's the `q()` lookup,
+and it costs about half a turn.
+
+So: **level 1 is smaller. Level 3 is much smaller and you take over order-checking.**
+
+### Two things that surprise people
+
+**1. Nothing changes level on its own. You are always the one who picks.**
+
+```ts
+compress(myTools)                    // level 1. ALWAYS — 2 tools or 500.
+compress(myTools, { level: 3 })      // level 3, because you asked for it
+
+const { level } = recommendLevel(myTools);   // just advice: returns 1 or 3
+compress(myTools, { level });                // now it's 3, because you passed it in
+```
+
+`recommendLevel()` **advises**; it does not act. On our 149-tool corpus,
+`compress(myTools)` saves 45.2% and `compress(myTools, { level: 3 })` saves 96.5% — so
+forgetting to pass the level back in quietly leaves half the win on the table.
+
+This is deliberate. Level 3 gives up provider-side schema enforcement, and silently
+changing a caller's correctness guarantees because their tool array grew would be a
+worse bug than the tokens are worth.
+
+**2. It switches on how *big* the block is, not how *many* tools you have.**
+
+A tool can be 20 tokens or 460, so counting them tells you very little:
+
+| Tool set | Level 1 block | Recommends |
+|---|---:|:-:|
+| 72 tools, one parameter each | ~5,000 tokens | **1** |
+| 200 tools, one parameter each | ~14,100 tokens | **3** |
+| **40** real MCP tools | ~10,600 tokens | **3** |
+| 149 real MCP tools | ~42,700 tokens | **3** |
+
+Forty chatty tools cross the line while 72 terse ones don't. The threshold is **10,000
+tokens** — about 5% of a 200k window. Below that, reclaiming the block doesn't change
+what fits, so keeping the provider's own argument validation is worth more than the
+saving.
+
+### The levels in full
+
 Ask the library. It returns 1 or 3, never 2, and explains itself:
 
 ```ts
@@ -301,6 +361,11 @@ that arm. Reach for it if lookups are your bottleneck and you are not on xAI.
 Level 3 has several map styles. Which one is cheapest turns out to depend on the
 model, so you can hand `compress()` a model id and let it use what was actually
 measured:
+
+> **This is the one thing the library does choose for you, and only if you pass
+> `model`.** Note the difference from levels: a map style is a pure encoding choice, so
+> picking a better one cannot change your results. The level *can* — level 3 hands
+> argument validation from the provider to toolgz — so that stays your explicit call.
 
 ```ts
 compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
@@ -783,8 +848,13 @@ Use `forGemini`, which strips the keywords Gemini won't accept. If a new one
 appears, it's a one-line addition to the adapter.
 
 **Savings look small.**
-Check tool count and shape with `recommendLevel(myTools)`. Under ~15 tools
-there's little to reclaim. Also check `c.stats`:
+First check you actually passed a level: `compress(myTools)` is **level 1**, and it
+stays level 1 no matter how many tools you hand it. `recommendLevel` advises, it does
+not act — you have to pass its answer in as `{ level }`.
+
+If you did, ask `recommendLevel(myTools)` and read the `reason`. It reports the size of
+your level-1 block, and under ~10,000 tokens there is little worth reclaiming. Also
+check `c.stats`:
 
 ```ts
 console.log(c.stats);
@@ -885,7 +955,15 @@ Returns:
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
 
-`{ level, reason, toolCount, namespaceCount, opsPerNamespace }`. Returns 1 or 3.
+`{ level, reason, toolCount, namespaceCount, opsPerNamespace }`. Returns 1 or 3, never 2.
+
+**It advises; it does not act.** Pass the answer back in yourself —
+`compress(tools, { level })`. Calling `compress(tools)` alone is level 1 regardless of
+how large `tools` is.
+
+The decision is on the **size** of the level-1 block (threshold 10,000 tokens ≈ 5% of a
+200k window), not on `toolCount`. The three shape fields are reported for your own
+logging; only block size drives the level.
 
 ### Provider adapters
 
@@ -974,8 +1052,13 @@ xAI is OpenAI-compatible — use `forOpenAI` with `baseURL: "https://api.x.ai/v1
 - **It has not been measured on a non-frontier model at level 3.** On Haiku 4.5, argument
   errors rose sharply (17 of 30 runs) — all caught and retried, no task lost, but that is the
   known edge.
-- **It is not magic on ten tools.** Under ~15 tools there is little to reclaim;
-  `recommendLevel()` will tell you so.
+- **It is not magic on a small tool block.** Under ~10,000 tokens at level 1 there is
+  little worth reclaiming, and `recommendLevel()` will say so and keep you on level 1.
+  That is usually a small number of tools, but not always — it depends on how verbose
+  your schemas are, not on the count.
+- **It does not pick a level for you.** `compress()` defaults to level 1 and stays there;
+  reaching level 3 is always an explicit `{ level }`. Deliberate — level 3 trades away
+  provider-side schema enforcement, and that is not a trade to make behind your back.
 
 ## Determinism
 

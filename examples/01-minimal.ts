@@ -37,12 +37,19 @@ const myTools: Tool[] = [
   },
 ];
 
-// Let the library pick. Two tools is a small block, so this returns level 1 —
-// which keeps the provider's own argument validation.
+// recommendLevel ADVISES — it does not act. You pass its answer back in yourself.
+// Two tools is a tiny block, so this returns level 1, which keeps the provider's own
+// argument validation.
 const { level, reason } = recommendLevel(myTools);
 console.log(`recommended level ${level}\n  ${reason}\n`);
 
 const c = compress(myTools, { level });
+
+// Worth being explicit about, because it catches people out: compress() with no level
+// is level 1 forever. It does not upgrade itself when your tool array grows, because
+// level 3 gives up provider-side schema checking and that is your call to make.
+console.log(`compress(myTools)            -> level ${compress(myTools).stats.level}`);
+console.log(`compress(myTools, {level:3}) -> level ${compress(myTools, { level: 3 }).stats.level}\n`);
 
 // Send `c.tools` instead of your tool array, and append `c.systemPreamble` to your
 // system prompt (it is "" below level 3, so appending it is always safe).

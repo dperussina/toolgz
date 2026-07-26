@@ -35,9 +35,19 @@ export type Recommendation = {
  *    slower and dearer than level 3. It is never recommended. It stays in the
  *    API for callers who need real operation names on the wire.
  *
- * The level 1 → 3 threshold is driven by tools-per-namespace, not tool count:
- * the compound-dispatcher overhead is paid per namespace, so a wide, sparse
- * tool set stays cheaper at level 1 even when the total count is large.
+ * The level 1 → 3 threshold is an absolute size test on the level-1 block —
+ * neither tool count nor namespace shape. A tool is 20 to 460 tokens depending
+ * on how verbose its schema is, so 40 real MCP tools cross the line while 72
+ * one-parameter tools do not.
+ *
+ * An earlier version gated on tools-per-namespace. That is a *level 2* question
+ * (level 2 pays dispatcher overhead per namespace); level 3 uses one flat
+ * dispatcher and is indifferent to shape. See the comment on THRESHOLD_TOKENS.
+ *
+ * This function only ever *advises*. `compress()` defaults to level 1 and stays
+ * there unless the caller passes a level explicitly — level 3 trades away the
+ * provider's own schema enforcement, and that is not a trade to make on a
+ * caller's behalf because their tool array grew.
  */
 export function recommendLevel(
   tools: Tool[],

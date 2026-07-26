@@ -190,7 +190,7 @@ So I built toolgz. It's on npm as of today.
 Two lines to adopt it:
 
 ```ts
-const { level } = recommendLevel(myTools);   // 1 for small sets, 3 for large
+const { level } = recommendLevel(myTools);   // advice: 1 for a small block, 3 for a big one
 const c = compress(myTools, { level });      // your existing MCP/SDK tool array
 const { tools, system } = forAnthropic(c);   // send these instead
 ```
