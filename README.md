@@ -2,7 +2,7 @@
 
 <p><strong>Your agent spends 30–70k tokens of context on tool definitions before the user types a word. toolgz gets up to ~85% of it back.</strong></p>
 
-<p><em>On a large tool set, at level 3. The safe default (level 1) reclaims 13–32% and gives up nothing — <code>recommendLevel()</code> picks for you.</em></p>
+<p><em>On a large tool set, at level 3. The safe default (level 1) reclaims 13–39% and gives up nothing — <code>recommendLevel()</code> picks for you.</em></p>
 
 <p>
 <a href="#measured-results">420-run cross-provider sweep</a> ·
@@ -39,7 +39,7 @@ const { tools, system } = forAnthropic(c);    // send these instead
 ```
 
 `compress(myTools)` with no `level` gives you **level 1** — safe, native tool calling,
-provider schema enforcement intact, and 13–32% smaller. The 71–85% figures below are
+provider schema enforcement intact, and 13–39% smaller (13–32% on the synthetic benchmark, 39% on the real 149-tool corpus). The 71–85% figures below are
 **level 3**, which is what `recommendLevel` returns once a tool set is big enough to
 amortise the dispatcher. Ask for it explicitly with `{ level: 3 }` if you prefer.
 
@@ -84,7 +84,7 @@ claim about real deployments.
 </picture>
 
 **All figures below are level 3** (`minified-plus`, the shipped default map style).
-Level 1 on the same sweep saves 13–32%; level 2 is dominated by level 3.
+Level 1 on the same sweep saves 13–32%; on the real 149-tool corpus it saves 39%; level 2 is dominated by level 3.
 
 | Provider | Model | Tool block | Prompt tokens | Latency | Tasks |
 |---|---|---:|---:|---:|:-:|
@@ -955,7 +955,7 @@ and it does not get deleted.
 ## Development
 
 ```bash
-npm test        # 268 tests, offline, no cost
+npm test        # 272 tests, offline, no cost
 npm run build   # tsc → dist/ with .d.ts
 
 npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money

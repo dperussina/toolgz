@@ -1,5 +1,6 @@
 import type { Level, Tool } from "./types.js";
-import { defaultNamespaceOf } from "./render/index.js";
+import { defaultNamespaceOf, countSchemaTokensApprox } from "./render/index.js";
+import { compress } from "./index.js";
 
 export type Recommendation = {
   level: Level;
@@ -49,25 +50,44 @@ export function recommendLevel(
 
   const base = { toolCount, namespaceCount, opsPerNamespace };
 
-  if (toolCount < 15) {
-    return {
-      ...base,
-      level: 1,
-      reason: `Only ${toolCount} tools — flattening schemas captures nearly all the available saving, and namespace collapse would add dispatcher overhead for little return.`,
-    };
-  }
+  // Size the level-1 block by asking the library what it would actually emit, rather
+  // than reconstructing it — an earlier version rebuilt the schema by hand, kept the
+  // full descriptions where level 1 emits a signature line, and overestimated by ~34%.
+  //
+  // `countSchemaTokensApprox` counts characters. Measured against `count_tokens` on
+  // real MCP tools the ratio is a stable ~2.1 chars/token (1.98 at 10 tools, 2.15 at
+  // 149), so dividing gives a fair local estimate with no API call.
+  const CHARS_PER_TOKEN = 2.1;
+  const l1Tokens = Math.round(
+    compress(tools, { level: 1 }).stats.compressedChars / CHARS_PER_TOKEN,
+  );
 
-  if (opsPerNamespace < 4) {
+  // The old heuristic gated level 3 on `opsPerNamespace >= 4`. That is a LEVEL-2
+  // question: level 2 pays dispatcher overhead per namespace, so its shape matters
+  // there. Level 3 uses one flat dispatcher and does not care about namespaces at all.
+  //
+  // The consequence was concrete: on the 149-tool real corpus (63 namespaces, 2.4 ops
+  // each) it recommended level 1 at 41,648 tokens when level 3 measures 2,980 — leaving
+  // ~38,700 tokens on the table. Measured on real tools, level 3 is smaller at EVERY
+  // count tested, down to 5 tools (635 vs 1,178).
+  //
+  // So size never argues for level 1. What argues for level 1 is that it keeps the
+  // provider's own schema enforcement, which levels 2-3 give up. That is worth more
+  // than a saving you would not notice — hence an absolute threshold on the block,
+  // not a shape test.
+  const THRESHOLD_TOKENS = 4000;
+
+  if (l1Tokens < THRESHOLD_TOKENS) {
     return {
       ...base,
       level: 1,
-      reason: `${toolCount} tools spread across ${namespaceCount} namespaces (${opsPerNamespace.toFixed(1)} ops each). The compound-dispatcher overhead is paid per namespace, so a set this sparse stays smaller at level 1.`,
+      reason: `The tool block is only ~${l1Tokens.toLocaleString()} tokens at level 1. Level 3 would be smaller, but not by enough to be worth giving up the provider's own argument validation, which level 1 keeps. Reach for level 3 when the block is large enough that reclaiming it changes what fits in your context.`,
     };
   }
 
   return {
     ...base,
     level: 3,
-    reason: `${toolCount} tools across ${namespaceCount} namespaces (${opsPerNamespace.toFixed(1)} ops each) — deep enough that a single dispatcher plus a cached code map beats per-tool definitions. Measured at ~82% fewer prompt tokens with no accuracy penalty across Opus 5, Sonnet 5 and Haiku 4.5, at the cost of roughly 0.6 extra turns and 1.7 lookup calls per task. Keep argument validation on — on weaker models malformed arguments rise and validation is what catches them. If your workload is latency-critical rather than context-critical, drop to level 1.`,
+    reason: `${toolCount} tools take ~${l1Tokens.toLocaleString()} tokens at level 1; level 3 replaces them with two dispatcher tools plus a cached map. Measured on 149 real MCP tools: 41,648 tokens at level 1 against 2,980 at level 3, and 60/60 tasks completed across four frontier providers with zero hallucinated names. The cost is roughly 0.3-1.7 lookup calls per task — so about half an extra turn — plus the loss of provider-side argument checking — keep \`validate\` on, which is what catches malformed arguments instead. If latency matters more than context, stay at level 1.`,
   };
 }

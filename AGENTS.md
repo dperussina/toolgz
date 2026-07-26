@@ -22,7 +22,7 @@ reclamation is the product.
 
 ## Status: shipped, and still being measured
 
-Published as `toolgz` on npm — 0.2.0 at the time of writing. 268 tests, clean typecheck,
+Published as `toolgz` on npm — 0.2.0 at the time of writing. 272 tests, clean typecheck,
 zero runtime dependencies.
 
 Six benchmark rounds so far; `docs/RESULTS.md` is the evidence log.

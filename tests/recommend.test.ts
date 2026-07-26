@@ -67,3 +67,50 @@ describe("recommendLevel", () => {
     }
   });
 });
+
+describe("recommendLevel sizes the block instead of testing its shape", () => {
+  /**
+   * The regression this exists for: the old heuristic gated level 3 on
+   * `opsPerNamespace >= 4`, which is a LEVEL-2 question — level 2 pays dispatcher
+   * overhead per namespace, level 3 uses one flat dispatcher and does not care.
+   *
+   * Real MCP tool names are verb-first (probe_url, discover_api), so splitting on the
+   * first underscore produces many tiny namespaces: the 149-tool corpus has 63 of them
+   * at 2.4 ops each. The old rule therefore recommended level 1 at 41,648 tokens where
+   * level 3 measures 2,980 — leaving ~38,700 tokens unclaimed on our own flagship corpus.
+   *
+   * Measured on real tools, level 3 is smaller at EVERY count tested, down to 5 tools
+   * (635 vs 1,178). Size never argues for level 1; keeping the provider's own argument
+   * validation does, which is why the threshold is absolute rather than shape-based.
+   */
+  it("recommends level 3 for the real 149-tool corpus", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const r = recommendLevel(REAL_TOOLS as any);
+    expect(r.level, `63 namespaces at 2.4 ops each must not veto level 3`).toBe(3);
+  });
+
+  it("is not fooled by a sparse namespace distribution", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const r = recommendLevel(REAL_TOOLS as any);
+    // The shape that used to trigger the wrong answer is still present.
+    expect(r.opsPerNamespace).toBeLessThan(4);
+    expect(r.level).toBe(3);
+  });
+
+  it("keeps level 1 for a block small enough that validation matters more", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const r = recommendLevel(REAL_TOOLS.slice(0, 8) as any);
+    expect(r.level).toBe(1);
+    expect(r.reason).toMatch(/validation/i);
+  });
+
+  it("estimates the level-1 block within 5% of a real token count", async () => {
+    // 149 real tools measure 41,648 tokens via count_tokens. The estimate must track it;
+    // an earlier version rebuilt the schema by hand and overshot by ~34%.
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const est = Number(
+      recommendLevel(REAL_TOOLS as any).reason.match(/~([\d,]+) tokens/)![1].replace(/,/g, ""),
+    );
+    expect(Math.abs(est - 41648) / 41648).toBeLessThan(0.05);
+  });
+});

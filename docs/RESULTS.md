@@ -505,6 +505,40 @@ Gemini tool cap. Verify the error text before trusting a threshold.
 
 ---
 
+### Round 6e — recommendLevel was giving the wrong answer for our own corpus
+
+Found while verifying defaults, not by benchmarking. `recommendLevel` gated level 3 on
+`opsPerNamespace >= 4`. That is a **level-2** question: level 2 pays dispatcher overhead
+per namespace, so its shape matters there. Level 3 uses one flat dispatcher and does not
+care about namespaces at all.
+
+Real MCP tool names are verb-first (`probe_url`, `discover_api`), so splitting on the first
+underscore yields many tiny namespaces — the 149-tool corpus has **63 namespaces at 2.4 ops
+each**. The rule therefore returned **level 1 at 41,648 tokens** where level 3 measures
+**2,980**, leaving ~38,700 tokens unclaimed on our own flagship corpus.
+
+Measured crossover, real tools, `count_tokens`:
+
+| Tools | Level 1 | Level 3 | Smaller |
+|---:|---:|---:|---|
+| 5 | 1,178 | 635 | L3 |
+| 15 | 3,584 | 844 | L3 |
+| 40 | 10,436 | 1,201 | L3 |
+| 149 | 41,648 | 2,980 | L3 |
+
+**Level 3 is smaller at every count tested, down to 5 tools.** Size never argues for level
+1. What argues for level 1 is that it keeps the provider's own argument validation, which
+levels 2–3 give up — so the threshold is now absolute (≈4,000 tokens of level-1 block)
+rather than a shape test. Below it, the saving is not worth losing provider-side checking;
+above it, reclaiming the block is.
+
+The block is now sized by asking the library what level 1 would actually emit. An earlier
+version of the fix rebuilt the schema by hand, kept full descriptions where level 1 emits a
+signature line, and overshot by ~34%; the estimate now tracks the real count within 2.4%
+(42,654 estimated against 41,648 measured).
+
+---
+
 ## Findings
 
 ### 1. Name minification did not cost accuracy — the design's central worry was wrong

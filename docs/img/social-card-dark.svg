@@ -58,7 +58,7 @@
 
   <line x1="56" y1="558" x2="1144" y2="558" stroke="#2c2c2a" stroke-width="1"/>
   <text x="56" y="583" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#ffffff">60/60 tasks completed · 0 hallucinated tool names · 0 malformed arguments</text>
-  <text x="56" y="603" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">claude-opus-5 · grok-4.5 · gemini-3.1-pro-preview · gpt-5.6-sol · reasoning at high effort · level 1 (the default) saves 13–32%</text>
+  <text x="56" y="603" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">claude-opus-5 · grok-4.5 · gemini-3.1-pro-preview · gpt-5.6-sol · reasoning at high effort · level 1 (the default) saves 13–39%</text>
   <text x="1144" y="583" text-anchor="end" font-family="SF Mono, Menlo, DejaVu Sans Mono, monospace" font-size="13" fill="#c3c2b7">github.com/dperussina/toolgz</text>
   <text x="1144" y="603" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#898781">Apache-2.0 · zero runtime dependencies</text>
 </svg>
