@@ -167,3 +167,8 @@ _*_probe_*
 # Recreate with: uvx --from git+https://github.com/github/spec-kit.git specify init --here
 .claude/
 .specify/
+
+# macOS folder metadata. Was tracked until 2026-07-26; it carries no secrets but
+# leaks local view preferences and stale filenames, and churns on every Finder visit.
+.DS_Store
+**/.DS_Store

@@ -245,23 +245,19 @@ export function compress(
   }
 
   /**
-   * Separator-insensitive lookup for map keys.
+   * Separator-insensitive lookup for level-3 map keys.
    *
-   * Observed on gpt-5.6-sol against the `grouped` style, on real MCP tools: the
-   * map prints `gdrive: sheets_append_rows(...)` and the model reassembled the
-   * name as `gdrive.sheets_append_rows` — a DOT, not the underscore the real name
-   * uses. Every single failure in that arm was this, systematically:
-   * coding.task_result, reverse.geocode, scorecard.lf_daily, get.label_data.
+   * Observed on gpt-5.6-sol against real MCP tools: the model reassembled a
+   * namespaced name with a DOT where the real tool uses an underscore —
+   * `gdrive.sheets_append_rows`, `coding.task_result`, `reverse.geocode`. Joining a
+   * namespace and an operation with `.` is the ordinary convention for qualified
+   * identifiers, so the inference is reasonable and ours was simply too strict.
+   * Rejecting it burned six turns per task.
    *
-   * Joining a namespace and an operation with `.` is the near-universal
-   * convention for qualified identifiers, so the model's inference is reasonable
-   * and ours was simply too strict. Rejecting it burned six turns per task and
-   * cost more than the smaller map saved.
-   *
-   * So we compare with every separator stripped, which accepts `.`, `:`, `/`,
-   * `-`, a space or nothing at all. Registered ONLY where the normalised form is
-   * unambiguous: if two real tools normalise alike, neither gets an alias and the
-   * caller must use an exact name.
+   * Keys are therefore compared with every separator stripped, which accepts `.`,
+   * `:`, `/`, `-`, a space, or nothing. Registered ONLY where the normalised form
+   * is unambiguous: if two tools normalise alike neither is aliased and the exact
+   * name is required, so this can never silently dispatch the wrong tool.
    */
   const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const normIndex = new Map<string, NormalizedTool | null>();
@@ -269,25 +265,18 @@ export function compress(
     const k = normKey(key);
     if (!k) return;
     const seen = normIndex.get(k);
-    // null marks "ambiguous"; never resolve a key that could mean two tools.
-    if (seen === undefined) normIndex.set(k, t);
-    else if (seen && seen.name !== t.name) normIndex.set(k, null);
+    if (seen === undefined) normIndex.set(k, t);          // first claim
+    else if (seen && seen.name !== t.name) normIndex.set(k, null); // ambiguous
   };
-
-  /** Exact map key first, then the separator-insensitive fallback. */
-  const lookupMapKey = (raw: unknown): NormalizedTool | undefined => {
-    const key = String(raw ?? "");
-    const exact = codeToTool.get(key);
-    if (exact) return exact;
-    return normIndex.get(normKey(key)) ?? undefined;
-  };
-
   if (level === 3) {
-    // Real names and every map key both get an entry, so `gdrive.sheets_append_rows`,
-    // `gdrive:sheets_append_rows` and `gdrivesheetsappendrows` all reach the same tool.
     for (const t of tools) registerNorm(t.name, t);
     for (const [code, t] of codeToTool) registerNorm(code, t);
   }
+  /** Exact map key first, then the separator-insensitive fallback. */
+  const lookupMapKey = (raw: unknown): NormalizedTool | undefined => {
+    const key = String(raw ?? "");
+    return codeToTool.get(key) ?? normIndex.get(normKey(key)) ?? undefined;
+  };
 
   const finish = (
     wire: unknown[],
@@ -580,14 +569,13 @@ export function compress(
       let name = rawName;
       let args = asObject(rawArgs);
 
-      // Observed on grok-4.5 across every level-3 style, including the shipped
-      // default: the model routes the lookup tool through the dispatcher, calling
-      // t(f="q", a={s:"lost freight"}) instead of q(s="lost freight").
-      //
-      // The preamble invites this — it says "Invoke with t(f=<name>, a={…})" and
-      // then "Use q to expand a name", which reads as "everything goes through t,
-      // including q". Rejecting it cost a turn each time, and `t`/`q` are our own
-      // reserved names, so the intent is unambiguous: nothing else could be meant.
+      // Observed on grok-4.5, on every level-3 map style: the model routes the
+      // lookup tool through the dispatcher — t(f="q", a={s:"…"}) instead of
+      // q(s="…"). The preamble invites it, saying "Invoke with t(f=<code>, a={…})"
+      // and then "Use q to expand a code", which reads as everything going through
+      // t. Tasks still completed, so this surfaced as wasted turns rather than as
+      // failure. `t` and `q` are our own reserved names, so the intent is
+      // unambiguous — nothing else could be meant.
       if (name === "t" && (args.f === "q" || args.f === "t")) {
         const nested = asObject(args.a);
         const flat = Object.fromEntries(
@@ -633,6 +621,7 @@ export function compress(
 
       const t = viaCode ?? lookupMapKey(args.f);
       if (!t) {
+        // A near miss is the common case, and a bare rejection costs another turn.
         const guess = nearest(String(args.f ?? ""), [...codeToTool.keys()]);
         return err(
           `No map code "${args.f}". Search with q(s=…).` +
