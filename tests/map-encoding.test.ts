@@ -505,3 +505,102 @@ describe("observed on grok-4.5: the lookup tool routed through the dispatcher", 
     expect(k.resolve("t", { f: "zzz_not_a_tool", a: {} }).kind).toBe("error");
   });
 });
+
+describe("generated cheat sheet", () => {
+  /**
+   * On the real 149-tool catalogue, 66 tools (44%) declare no required parameters,
+   * so a `name+required` line degenerates to a bare name and hides 451 optional
+   * parameters behind a q() lookup. Lookups dominate cost: 0 -> 2 of them was a 6x
+   * cost increase in the tier-2 run.
+   *
+   * Listing those parameters per tool costs ~3,240 chars. But 21 names cover 402 of
+   * the 451 slots, so stating them once costs ~580. That ratio is the whole reason
+   * this is a generated sheet rather than a bigger map.
+   */
+  // A suffix family only exists if BOTH `svc_reportN` and `svc_reportN_daily` are
+  // present — the detector looks for a tool whose name is another tool's name plus a
+  // suffix. Generating only the _daily variant creates no pair to detect.
+  const MANY = [
+    ...Array.from({ length: 40 }, (_, i) => ({ i, suffix: "" })),
+    ...Array.from({ length: 4 }, (_, i) => ({ i: i * 4, suffix: "_daily" })),
+  ].map(({ i, suffix }) => ({
+    name: `svc_report${i}${suffix}`,
+    description: "A report.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "integer" }, offset: { type: "integer" }, only: { type: "string" } },
+      ...(i % 3 === 0 ? { required: ["limit"] } : {}),
+    },
+  }));
+
+  it("names optional parameters shared across many tools", () => {
+    const p = compress(MANY as any, { level: 3, cheatSheet: true }).systemPreamble;
+    expect(p).toContain("<toolgz>");
+    expect(p).toMatch(/Optional parameters shared by many tools:.*offset/);
+  });
+
+  it("does not list a parameter only one tool has", () => {
+    const tools = [
+      ...MANY,
+      { name: "lone_tool", description: "x", inputSchema: { type: "object", properties: { wibble_unique: { type: "string" } } } },
+    ];
+    const p = compress(tools as any, { level: 3, cheatSheet: true }).systemPreamble;
+    expect(p).not.toContain("wibble_unique");
+  });
+
+  it("warns about suffix-only families, the hardest case for a compressed map", () => {
+    const p = compress(MANY as any, { level: 3, cheatSheet: true }).systemPreamble;
+    expect(p).toMatch(/differ from another tool only by a suffix.*_daily/);
+  });
+
+  it("is off by default, so no existing caller's prefix changes", () => {
+    expect(compress(MANY as any, { level: 3 }).systemPreamble).not.toContain("<toolgz>");
+  });
+
+  it("is byte-deterministic — the preamble sits in the cached prefix", () => {
+    const runs = [1, 2, 3].map(
+      () => compress(MANY as any, { level: 3, cheatSheet: true }).systemPreamble,
+    );
+    expect(new Set(runs).size).toBe(1);
+  });
+
+  it("emits nothing for an empty tool set rather than an empty shell", () => {
+    expect(compress([], { level: 3, cheatSheet: true }).systemPreamble).not.toContain("<toolgz>");
+  });
+
+  it("composes with any map style", () => {
+    for (const mapStyle of ["name+required", "nocode", "compact", "grouped"] as const) {
+      const p = compress(MANY as any, { level: 3, mapStyle, cheatSheet: true }).systemPreamble;
+      expect(p, mapStyle).toContain("<toolgz>");
+      expect(p, mapStyle).toContain("<toolmap>");
+    }
+  });
+
+  it("still resolves every real tool with the sheet on", async () => {
+    const { REAL_TOOLS } = await import("../bench/fixtures/real.js");
+    const k = compress(REAL_TOOLS as any, { level: 3, cheatSheet: true });
+    const bad = REAL_TOOLS.filter((t: any) => {
+      const r = k.resolve("t", { f: k.codeFor(t.name), a: {} });
+      return r.kind === "error" && !/Missing required/.test(r.message);
+    });
+    expect(bad.map((t: any) => t.name)).toEqual([]);
+  });
+});
+
+describe("optional map style", () => {
+  it("shows optional params only when there are no required ones", () => {
+    const tools = [
+      { name: "a_req", description: "x", inputSchema: { type: "object", properties: { q: { type: "string" }, extra: { type: "string" } }, required: ["q"] } },
+      { name: "a_opt", description: "y", inputSchema: { type: "object", properties: { limit: { type: "integer" }, offset: { type: "integer" } } } },
+    ];
+    const map = compress(tools as any, { level: 3, mapStyle: "optional" }).systemPreamble;
+    expect(map).toMatch(/a_req q$/m);          // required listed, optional omitted
+    expect(map).toMatch(/a_opt \?limit,offset/); // ? marks an all-optional tool
+  });
+
+  it("explains the ? marker in the legend", () => {
+    const p = compress([{ name: "a_b", description: "x", inputSchema: { type: "object", properties: {} } }] as any,
+      { level: 3, mapStyle: "optional" }).systemPreamble;
+    expect(p).toContain("? marks a tool whose parameters are all optional");
+  });
+});

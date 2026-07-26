@@ -47,6 +47,7 @@ const MAP_STYLES: MapStyle[] = [
   "nocode",
   "grouped",
   "compact",
+  "optional",
 ];
 
 /**
@@ -78,6 +79,76 @@ function asObject(v: unknown): Record<string, any> {
 
 function defaultAlias(ns: string): string {
   return ns;
+}
+
+
+/**
+ * Generate the `<toolgz>` cheat sheet from the tool set.
+ *
+ * Everything here is derived, sorted and threshold-driven — never hand-written and
+ * never model-specific — because the preamble sits in the cached prefix and a
+ * single non-deterministic byte invalidates it.
+ *
+ * Three sections, each earning its tokens:
+ *
+ *  - Shared optional parameters. On the real 149-tool catalogue, 21 names cover 402
+ *    of 451 optional slots. Stating them once costs ~40 tokens; the per-tool
+ *    alternative costs ~800.
+ *  - Naming families. Suffixes like `_daily` / `_detail` distinguish tools whose
+ *    entire semantic difference is that suffix, which is the hardest case for a
+ *    compressed map. One line covers all of them.
+ *  - Two protocol notes, both for mistakes observed in real runs: models call
+ *    `t(f="q")` instead of `q(...)`, and substitute `.` for `_` in names. Both are
+ *    now accepted by the resolver, so this only saves the model a wasted attempt.
+ */
+function cheatSheetFor(tools: NormalizedTool[]): string {
+  if (!tools.length) return "";
+  const lines: string[] = [];
+
+  // Shared optional parameters. Threshold scales with catalogue size so a small
+  // tool set does not get a sheet listing everything it has.
+  const floor = Math.max(3, Math.ceil(tools.length * 0.03));
+  const counts = new Map<string, number>();
+  for (const t of tools) {
+    const req = new Set(t.schema.required ?? []);
+    for (const p of Object.keys(t.schema.properties ?? {})) {
+      if (!req.has(p)) counts.set(p, (counts.get(p) ?? 0) + 1);
+    }
+  }
+  const shared = [...counts.entries()]
+    .filter(([, n]) => n >= floor)
+    // Sort by frequency then name: deterministic, and the most useful first.
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([p]) => p);
+  if (shared.length) {
+    lines.push(`Optional parameters shared by many tools: ${shared.join(", ")}.`);
+  }
+
+  // Naming families, where a suffix is the whole distinction between two tools.
+  const suffixes = new Map<string, number>();
+  for (const t of tools) {
+    const i = t.name.lastIndexOf("_");
+    if (i > 0) {
+      const suf = t.name.slice(i);
+      if (tools.some((o) => o !== t && o.name === t.name.slice(0, i))) {
+        suffixes.set(suf, (suffixes.get(suf) ?? 0) + 1);
+      }
+    }
+  }
+  const fams = [...suffixes.entries()]
+    .filter(([, n]) => n >= 2)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([s]) => s);
+  if (fams.length) {
+    lines.push(
+      `Some tools differ from another tool only by a suffix (${fams.join(", ")}). Match the suffix the request asks for.`,
+    );
+  }
+
+  lines.push("Call q directly; do not pass it through t.");
+  lines.push("Use names exactly as written in <toolmap>.");
+
+  return `<toolgz>\n${lines.join("\n")}\n</toolgz>\n`;
 }
 
 export function compress(
@@ -395,6 +466,16 @@ export function compress(
       const req = t.schema.required ?? [];
       return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
     }
+    // `optional`: required args when present, otherwise the optional ones. A line
+    // that names no parameters at all forces a lookup, and on a real catalogue 44%
+    // of tools have zero required parameters — so for nearly half the map the
+    // default silently degrades to the bare `name` style.
+    if (mapStyle === "optional") {
+      const req = t.schema.required ?? [];
+      if (req.length) return `${code} ${t.name} ${req.join(",")}`;
+      const opt = Object.keys(t.schema.properties ?? {}).slice(0, 4);
+      return opt.length ? `${code} ${t.name} ?${opt.join(",")}` : `${code} ${t.name}`;
+    }
     // A space costs fewer tokens than a comma at the same character count.
     if (mapStyle === "compact") {
       const req = t.schema.required ?? [];
@@ -474,6 +555,8 @@ export function compress(
       ? "Each line is: code name required-args. "
       : mapStyle === "compact"
         ? "Each line is: code name required-args, space separated. "
+        : mapStyle === "optional"
+          ? "Each line is: code name required-args; a leading ? marks a tool whose parameters are all optional. "
       : mapStyle === "signature"
         ? "Each line is: code name(args), where ? marks optional. "
         : mapStyle === "nocode"
@@ -486,7 +569,8 @@ export function compress(
   const invokeHint = codeless
     ? "Invoke with t(f=<name>, a={…}). Use q to expand a name before calling if you are unsure of its parameters."
     : "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
-  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
+  const sheet = options.cheatSheet ? cheatSheetFor(tools) : "";
+  const systemPreamble = `${sheet}<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 
   return finish(
     wire,

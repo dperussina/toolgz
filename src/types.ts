@@ -82,7 +82,8 @@ export type MapStyle =
   | "terse"
   | "nocode"
   | "grouped"
-  | "compact";
+  | "compact"
+  | "optional";
 
 export type CompressOptions = {
   level?: Level;
@@ -99,6 +100,21 @@ export type CompressOptions = {
   searchLimit?: number;
   /** Validate arguments against the original schema before dispatch. Default true. */
   validate?: boolean;
+  /**
+   * Level 3 only. Prepend a generated `<toolgz>` cheat sheet to the preamble.
+   *
+   * Motivated by measurement on a real 149-tool catalogue: 66 tools (44%) declare
+   * no required parameters, so a `name+required` map line degenerates to a bare
+   * name and hides 451 optional parameters behind a `q()` lookup. Lookups are the
+   * dominant cost — going from 0 to 2 of them was a 6x cost increase.
+   *
+   * Listing those parameters per tool would cost ~800 tokens. But 21 distinct
+   * names cover 402 of the 451 slots, and 46 of the 66 tools are fully described
+   * by that shared set, so stating them ONCE costs ~40. The sheet is generated
+   * from the tool set, never hand-written, and is fully deterministic so the
+   * cached prefix stays byte-stable.
+   */
+  cheatSheet?: boolean;
 };
 
 export type Resolution =

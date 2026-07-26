@@ -221,6 +221,34 @@ export const minifiedCompact = fromLibrary(
   { level: 3, mapStyle: "compact" },
 );
 
+/**
+ * A generated `<toolgz>` cheat sheet ahead of the map. Targets the dominant cost:
+ * on the real catalogue 44% of tools declare no required parameters, so the map
+ * shows them as a bare name and hides 451 optional parameters behind a lookup —
+ * and lookups drove a 6x cost swing in tier 2. 21 shared names cover 402 of those
+ * 451 slots, so the sheet states them once for +580 chars where a per-tool listing
+ * costs +3,240.
+ */
+export const minifiedSheet = fromLibrary(
+  "minified-sheet",
+  "Arm A⁷ · default + generated cheat sheet",
+  { level: 3, cheatSheet: true },
+);
+
+/** The per-tool alternative, kept so the cheaper design is measured against it. */
+export const minifiedOptional = fromLibrary(
+  "minified-optional",
+  "Arm A⁸ · optional params in the map line",
+  { level: 3, mapStyle: "optional" },
+);
+
+/** Tier-2 winner plus the sheet, since the two are orthogonal. */
+export const minifiedNocodeSheet = fromLibrary(
+  "minified-nocode-sheet",
+  "Arm A⁹ · nocode + generated cheat sheet",
+  { level: 3, mapStyle: "nocode", cheatSheet: true },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
   minifiedTerse,
   minifiedPlus,
@@ -228,6 +256,9 @@ export const A_VARIANTS: CompressionStrategy[] = [
   minifiedNocode,
   minifiedGrouped,
   minifiedCompact,
+  minifiedSheet,
+  minifiedOptional,
+  minifiedNocodeSheet,
 ];
 
 /** Maps each library-backed arm to the configuration it must equal. */
@@ -243,4 +274,7 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedNocode, opts: { level: 3, mapStyle: "nocode" } },
   { arm: minifiedGrouped, opts: { level: 3, mapStyle: "grouped" } },
   { arm: minifiedCompact, opts: { level: 3, mapStyle: "compact" } },
+  { arm: minifiedSheet, opts: { level: 3, cheatSheet: true } },
+  { arm: minifiedOptional, opts: { level: 3, mapStyle: "optional" } },
+  { arm: minifiedNocodeSheet, opts: { level: 3, mapStyle: "nocode", cheatSheet: true } },
 ];
