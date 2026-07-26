@@ -39,65 +39,41 @@ export type NormalizedTool = {
  */
 export type Level = 0 | 1 | 2 | 3;
 
-/**
- * How each line of the level-3 `<toolmap>` is rendered.
- *
- *   name           `a0 github_create_issue`
- *   name+required  `a0 github_create_issue owner,repo,title`   <- default
- *   compact        `aa github_create_issue owner repo title`
- *   signature      `a0 github_create_issue(owner,repo,title,body?,labels?)`
- *   terse          `a0 create new issue in repository`
- *   nocode         `github_create_issue owner,repo,title`
- *   grouped        `github: create_issue(owner,repo,title) search_issues(q)`
- *
- * `name+required` is the default, chosen on measurement: it costs a few tokens per
- * tool and cuts malformed arguments on models that fill the generic argument bag
- * badly, because the dispatcher levels give up provider-side constrained decoding
- * and this buys some of it back cheaply. `name` is smaller and failed
- * deterministically on grok-4.5. `signature` also names optional parameters, which
- * removes most remaining `q()` lookups — a bigger cached map traded for fewer
- * turns, which matters where every turn pays for a fresh round of reasoning.
- * `terse` drops the real name entirely; most aggressive, least legible.
- *
- * The rest are experimental and NOT recommended until the cross-provider accuracy
- * sweep clears them.
- *
- * `nocode` and `grouped` drop the code column, since the map already carries the
- * real name and so pays for identity twice. With no code the tool's own name is its
- * map key, which also removes a failure mode seen in the wild (a model calling the
- * code as the tool name — see tests/robustness.test.ts).
- *
- * `explicit` is the cheap answer to the same problem `optional` attacks. On a real
- * catalogue 44% of tools declare no required parameters, so their map line is a bare
- * name — indistinguishable from a tool whose parameters were simply omitted. Those
- * tools are callable with NO arguments at all, and the map never says so, which is
- * why models spend a q() lookup confirming. `explicit` marks them `name ()`.
- * Measured: naming four optional parameters each costs ~2,640 characters; the marker
- * costs ~198, thirteen times less, and states the fact the model actually lacks.
- *
- * `compact` carries exactly the same information as `name+required` and the same map
- * contract, but serialises it more cheaply: a space rather than a comma between
- * required arguments (identical character count, ~3% fewer tokens on every tokenizer
- * measured) and a flat two-letter code rather than the namespace-prefixed `a0` form.
- * Measured on 149 real MCP tools: −14.4% map tokens on claude-opus-5, −16.6% on
- * gpt-5.6-sol, −16.2% on gemini-3.1-pro, −14.4% on grok-4.5, against a character
- * reduction of only 3.5% — which is why this was measured in tokens, not characters.
- */
 // Type-only, so the cycle with policy.generated.ts (which imports MapStyle from
 // here) is erased at compile time.
 import type { Objective } from "./policy.generated.js";
 export type { Objective };
 
-export type MapStyle =
-  | "name"
-  | "name+required"
-  | "signature"
-  | "terse"
-  | "nocode"
-  | "grouped"
-  | "compact"
-  | "optional"
-  | "explicit";
+/**
+ * How each line of the level-3 `<toolmap>` is rendered.
+ *
+ *   name+required  `a0 github_create_issue owner,repo,title`   <- default
+ *   explicit       `a0 github_create_issue owner,repo,title`
+ *                  `a0 scorecard_lf_daily ()`  <- () = takes no required args
+ *   signature      `a0 github_create_issue(owner,repo,title,body?,labels?)`
+ *
+ * Three styles, each with a measured reason to exist. Six others were tried and
+ * removed in 0.2.0 because they made things worse — see docs/RESULTS.md Round 6.
+ *
+ * `name+required` is the default: the only style perfect on all four providers with
+ * zero malformed arguments. It names required parameters because the dispatcher
+ * levels give up provider-side constrained decoding, and a few tokens per tool buys
+ * some of it back.
+ *
+ * `explicit` adds one thing: a `()` marker on tools that declare no required
+ * parameters. On a real catalogue 44% of tools are like that, and their line would
+ * otherwise be a bare name — indistinguishable from a tool whose parameters were
+ * omitted, so the model spends a lookup finding out it could just call it. Measured
+ * over 432 runs it cut lookups on all four providers and cost 9–21% less on three,
+ * but **13% more on grok-4.5**. Reach for it via `objective: "cost"` rather than
+ * setting it by hand.
+ *
+ * `signature` names optional parameters too, which removes most remaining lookups.
+ * A bigger cached map traded for fewer turns — worth it where every turn pays for a
+ * fresh round of reasoning, and measurably worse on xAI for reasons we cannot yet
+ * explain.
+ */
+export type MapStyle = "name+required" | "explicit" | "signature";
 
 export type CompressOptions = {
   level?: Level;
@@ -133,21 +109,6 @@ export type CompressOptions = {
    * real entries only for "cost".
    */
   objective?: Objective;
-  /**
-   * Level 3 only. Prepend a generated `<toolgz>` cheat sheet to the preamble.
-   *
-   * Motivated by measurement on a real 149-tool catalogue: 66 tools (44%) declare
-   * no required parameters, so a `name+required` map line degenerates to a bare
-   * name and hides 451 optional parameters behind a `q()` lookup. Lookups are the
-   * dominant cost — going from 0 to 2 of them was a 6x cost increase.
-   *
-   * Listing those parameters per tool would cost ~800 tokens. But 21 distinct
-   * names cover 402 of the 451 slots, and 46 of the 66 tools are fully described
-   * by that shared set, so stating them ONCE costs ~40. The sheet is generated
-   * from the tool set, never hand-written, and is fully deterministic so the
-   * cached prefix stays byte-stable.
-   */
-  cheatSheet?: boolean;
 };
 
 export type Resolution =

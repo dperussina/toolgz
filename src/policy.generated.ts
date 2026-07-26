@@ -60,18 +60,18 @@ export type BrokenEntry = {
   sweep: string;
 };
 
-export const BROKEN: readonly BrokenEntry[] = [
-  {
-    model: "grok-4.5",
-    mapStyle: "nocode",
-    reason:
-      "19% silent failure rate (7 of 36): the model answered with no tool call at all " +
-      "— turns=1, no error — across four different scenarios. Same signature that " +
-      "disqualified bare names. Intermittent: it passed 12/12 on an earlier sweep.",
-    n: 36,
-    sweep: "2026-07-26T03-07-25",
-  },
-];
+/**
+ * Empty, and that is the current truth rather than an oversight.
+ *
+ * The one pair ever measured unsafe was `nocode` on grok-4.5 — a 19% silent
+ * failure rate, the model answering with no tool call at all. In 0.2.0 that style
+ * was removed from the library outright, so the pair can no longer be requested.
+ * Deleting a footgun beats documenting it.
+ *
+ * The mechanism stays because it is the safety valve: if a future sweep finds a
+ * (model, style) pair that fails, it goes here and is refused at the boundary.
+ */
+export const BROKEN: readonly BrokenEntry[] = [];
 
 /** The style used when nothing is known about the model. */
 export const CONSERVATIVE_DEFAULT: MapStyle = "name+required";

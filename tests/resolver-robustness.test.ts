@@ -73,7 +73,7 @@ describe("a namespace joined with a dot instead of an underscore", () => {
   });
 
   it("applies to every shipped map style", () => {
-    for (const mapStyle of ["name", "name+required", "signature", "terse"] as const) {
+    for (const mapStyle of ["name+required", "explicit", "signature"] as const) {
       const k = compress(TOOLS, { level: 3, mapStyle });
       const r = k.resolve("t", { f: "gdrive.sheets_append_rows", a: ARGS });
       expect(r.kind, mapStyle).toBe("call");
@@ -118,7 +118,7 @@ describe("the lookup tool routed through the dispatcher", () => {
    * invites it — "Invoke with t(f=<code>, a={…})" then "Use q to expand a code"
    * reads as everything going through t.
    */
-  for (const mapStyle of ["name", "name+required", "signature", "terse"] as const) {
+  for (const mapStyle of ["name+required", "explicit", "signature"] as const) {
     it(`${mapStyle}: t(f="q") searches`, () => {
       const r = compress(TOOLS, { level: 3, mapStyle }).resolve("t", {
         f: "q",

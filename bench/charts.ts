@@ -159,15 +159,21 @@ const ARM_LABEL: Record<string, string> = {
   "minified-sig": "L3 signature",
   native: "native search",
 };
+/**
+ * Only arms that correspond to something the library still offers.
+ *
+ * `minified` (mapStyle "name") and `minified-terse` were removed in 0.2.0 because
+ * they measured worse — charting them would advertise options a reader cannot use.
+ * Their raw results stay committed as evidence; the charts are documentation, and
+ * documentation has to match the shipped API.
+ */
 const ARM_ORDER = [
   "control",
   "signatures",
   "hybrid",
-  "minified-terse",
-  "minified",
   "minified-plus",
+  "minified-explicit",
   "minified-sig",
-  "minified-default",
 ];
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);

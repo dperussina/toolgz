@@ -34,30 +34,19 @@ import {
 import { validateArgs } from "./runtime/validate.js";
 import { nearest } from "./runtime/similar.js";
 import { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
+import type { PolicyEntry, BrokenEntry } from "./policy.generated.js";
 
 export * from "./types.js";
 export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/index.js";
+// Exported so consumers can see WHY a style was chosen. The generated file is not in
+// the published tarball (only dist/ ships), so without this the policy is a black box
+// and the README could point at something a user cannot read.
+export { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
+export type { PolicyEntry, BrokenEntry, Objective } from "./policy.generated.js";
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
 const LEVELS: Level[] = [0, 1, 2, 3];
-const MAP_STYLES: MapStyle[] = [
-  "name",
-  "name+required",
-  "signature",
-  "terse",
-  "nocode",
-  "grouped",
-  "compact",
-  "optional",
-  "explicit",
-];
-
-/**
- * Styles with no code column. For these the tool's real name is its map key, so
- * `t`, `q`, `resolve` and `codeFor` keep working unchanged — the only difference
- * is what gets written into the map and what the model passes to `f`.
- */
-const CODELESS: MapStyle[] = ["nocode", "grouped"];
+const MAP_STYLES: MapStyle[] = ["name+required", "explicit", "signature"];
 
 const err = (message: string, recoverable = true): Resolution => ({
   kind: "error",
@@ -84,73 +73,47 @@ function defaultAlias(ns: string): string {
 }
 
 
+
 /**
- * Generate the `<toolgz>` cheat sheet from the tool set.
+ * Choose the level-3 map style, and report anything it had to substitute.
  *
- * Everything here is derived, sorted and threshold-driven — never hand-written and
- * never model-specific — because the preamble sits in the cached prefix and a
- * single non-deterministic byte invalidates it.
+ * Pure and exported so the disallow path is testable against synthetic tables. It
+ * used to be inline in `compress()`, which meant it could only be exercised through
+ * a real BROKEN entry — and once the one unsafe style was removed from the library
+ * there were none, leaving the safety valve untested.
  *
- * Three sections, each earning its tokens:
- *
- *  - Shared optional parameters. On the real 149-tool catalogue, 21 names cover 402
- *    of 451 optional slots. Stating them once costs ~40 tokens; the per-tool
- *    alternative costs ~800.
- *  - Naming families. Suffixes like `_daily` / `_detail` distinguish tools whose
- *    entire semantic difference is that suffix, which is the hardest case for a
- *    compressed map. One line covers all of them.
- *  - Two protocol notes, both for mistakes observed in real runs: models call
- *    `t(f="q")` instead of `q(...)`, and substitute `.` for `_` in names. Both are
- *    now accepted by the resolver, so this only saves the model a wasted attempt.
+ * Order: an explicit request wins unless measured unsafe for that model; then the
+ * measured policy for (model, objective); then the conservative default.
  */
-function cheatSheetFor(tools: NormalizedTool[]): string {
-  if (!tools.length) return "";
-  const lines: string[] = [];
+export function selectMapStyle(
+  options: Pick<CompressOptions, "mapStyle" | "model" | "objective">,
+  policy: readonly PolicyEntry[] = POLICY,
+  broken: readonly BrokenEntry[] = BROKEN,
+): { mapStyle: MapStyle; requestedMapStyle?: MapStyle; fallbackReason?: string } {
+  const objective = options.objective ?? "occupancy";
 
-  // Shared optional parameters. Threshold scales with catalogue size so a small
-  // tool set does not get a sheet listing everything it has.
-  const floor = Math.max(3, Math.ceil(tools.length * 0.03));
-  const counts = new Map<string, number>();
-  for (const t of tools) {
-    const req = new Set(t.schema.required ?? []);
-    for (const p of Object.keys(t.schema.properties ?? {})) {
-      if (!req.has(p)) counts.set(p, (counts.get(p) ?? 0) + 1);
-    }
-  }
-  const shared = [...counts.entries()]
-    .filter(([, n]) => n >= floor)
-    // Sort by frequency then name: deterministic, and the most useful first.
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([p]) => p);
-  if (shared.length) {
-    lines.push(`Optional parameters shared by many tools: ${shared.join(", ")}.`);
-  }
-
-  // Naming families, where a suffix is the whole distinction between two tools.
-  const suffixes = new Map<string, number>();
-  for (const t of tools) {
-    const i = t.name.lastIndexOf("_");
-    if (i > 0) {
-      const suf = t.name.slice(i);
-      if (tools.some((o) => o !== t && o.name === t.name.slice(0, i))) {
-        suffixes.set(suf, (suffixes.get(suf) ?? 0) + 1);
-      }
-    }
-  }
-  const fams = [...suffixes.entries()]
-    .filter(([, n]) => n >= 2)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([s]) => s);
-  if (fams.length) {
-    lines.push(
-      `Some tools differ from another tool only by a suffix (${fams.join(", ")}). Match the suffix the request asks for.`,
-    );
+  if (options.mapStyle) {
+    const unsafe = options.model
+      ? broken.find((b) => b.model === options.model && b.mapStyle === options.mapStyle)
+      : undefined;
+    if (!unsafe) return { mapStyle: options.mapStyle };
+    // Owner decision: disallow a measured-unsafe pair and fall back, rather than
+    // honour it with a warning. Reported, never silent.
+    return {
+      mapStyle: CONSERVATIVE_DEFAULT,
+      requestedMapStyle: options.mapStyle,
+      fallbackReason:
+        `mapStyle "${options.mapStyle}" is measured unsafe on ${unsafe.model}: ` +
+        `${unsafe.reason} (n=${unsafe.n}, sweep ${unsafe.sweep}). ` +
+        `Using "${CONSERVATIVE_DEFAULT}" instead.`,
+    };
   }
 
-  lines.push("Call q directly; do not pass it through t.");
-  lines.push("Use names exactly as written in <toolmap>.");
-
-  return `<toolgz>\n${lines.join("\n")}\n</toolgz>\n`;
+  if (options.model) {
+    const hit = policy.find((e) => e.model === options.model && e.objective === objective);
+    return { mapStyle: hit ? hit.mapStyle : CONSERVATIVE_DEFAULT };
+  }
+  return { mapStyle: CONSERVATIVE_DEFAULT };
 }
 
 export function compress(
@@ -171,38 +134,11 @@ export function compress(
   // 60/60 tasks, fewer malformed arguments, fewer lookup round-trips, and
   // faster wall-clock than uncompressed on every provider. The larger map pays
   // for itself by removing a discovery turn.
-  // Resolve the map style: explicit request, then measured policy, then the
-  // conservative default. Any substitution is reported through stats rather than
-  // applied silently — silent substitution is the failure mode this project has been
-  // bitten by repeatedly.
-  const objective = options.objective ?? "occupancy";
-  let requestedMapStyle: MapStyle | undefined = options.mapStyle;
-  let fallbackReason: string | undefined;
-  let mapStyle: MapStyle;
-
-  if (options.mapStyle) {
-    const broken = options.model
-      ? BROKEN.find((b) => b.model === options.model && b.mapStyle === options.mapStyle)
-      : undefined;
-    if (broken) {
-      // Owner decision #15: disallow a measured-broken pair and fall back, rather
-      // than honour it with a warning.
-      mapStyle = CONSERVATIVE_DEFAULT;
-      fallbackReason =
-        `mapStyle "${options.mapStyle}" is measured unsafe on ${broken.model}: ` +
-        `${broken.reason} (n=${broken.n}, sweep ${broken.sweep}). ` +
-        `Using "${CONSERVATIVE_DEFAULT}" instead.`;
-    } else {
-      mapStyle = options.mapStyle;
-    }
-  } else if (options.model) {
-    const hit = POLICY.find(
-      (e) => e.model === options.model && e.objective === objective,
-    );
-    mapStyle = hit ? hit.mapStyle : CONSERVATIVE_DEFAULT;
-  } else {
-    mapStyle = CONSERVATIVE_DEFAULT;
-  }
+  const {
+    mapStyle,
+    requestedMapStyle,
+    fallbackReason,
+  } = selectMapStyle(options, POLICY, BROKEN);
   if (!MAP_STYLES.includes(mapStyle)) {
     throw new Error(
       `unsupported mapStyle: ${mapStyle} (expected ${MAP_STYLES.join(", ")})`,
@@ -228,39 +164,8 @@ export function compress(
   // -- level 3 code assignment ----------------------------------------------
   const codeToTool = new Map<string, NormalizedTool>();
   const toolToCode = new Map<string, string>();
-  const codeless = CODELESS.includes(mapStyle);
-  if (level === 3 && codeless) {
-    // The name is the key. Nothing downstream needs to know the difference.
-    for (const t of tools) {
-      codeToTool.set(t.name, t);
-      toolToCode.set(t.name, t.name);
-    }
-    if (mapStyle === "grouped") {
-      // `grouped` prints `ns: op(args)`, so a model reading the map sees the bare
-      // op rather than the full name. Alias it — but only where it is globally
-      // unambiguous, since two namespaces can both expose e.g. `list`. Ambiguous
-      // ops are simply not aliased, and the legend states the naming rule.
-      const opCounts = new Map<string, number>();
-      for (const t of tools) opCounts.set(t.op, (opCounts.get(t.op) ?? 0) + 1);
-      for (const t of tools) {
-        if (opCounts.get(t.op) === 1 && !codeToTool.has(t.op)) codeToTool.set(t.op, t);
-      }
-    }
-  } else if (mapStyle === "compact" && level === 3) {
-    // Flat two-letter index rather than the namespace-prefixed `a0` scheme.
-    // Measured cheaper on every tokenizer, and the namespace prefix was already
-    // redundant with the tool name printed on the same line.
-    //
-    // Deliberately NOT base36, which ties the best token score and is broken:
-    // (26).toString(36) === "q" and (29).toString(36) === "t", so two codes would
-    // collide with the dispatcher tool names and make those tools unreachable via
-    // the bare-code path in resolve().
-    tools.forEach((t, i) => {
-      const code = CODE_CHARS[Math.floor(i / 26) % 26] + CODE_CHARS[i % 26];
-      codeToTool.set(code, t);
-      toolToCode.set(t.name, code);
-    });
-  } else if (level === 3) {
+  if (level === 3) {
+
     let ni = 0;
     for (const [, list] of groups) {
       // Two chars past 26 namespaces so codes stay unique and short.
@@ -485,85 +390,22 @@ export function compress(
   // against a full schema's ~400 — to reduce malformed arguments on models that
   // fill the generic argument bag poorly.
   const renderLine = (code: string, t: NormalizedTool): string => {
-    if (mapStyle === "terse") return `${code} ${terseDescriptor(t.description) || t.name}`;
+    const req = t.schema.required ?? [];
     // Full signature: optional params included, so the model rarely needs q().
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
-    if (mapStyle === "name+required") {
-      const req = t.schema.required ?? [];
-      return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
-    }
-    // `explicit`: same as the default when a tool has required args, but marks a
-    // zero-required tool `()` so the model knows it can be called as-is rather than
-    // spending a lookup to find out. Three characters per affected tool against
-    // ~40 for naming its optional parameters.
-    if (mapStyle === "explicit") {
-      const req = t.schema.required ?? [];
-      return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name} ()`;
-    }
-    // `optional`: required args when present, otherwise the optional ones. A line
-    // that names no parameters at all forces a lookup, and on a real catalogue 44%
-    // of tools have zero required parameters — so for nearly half the map the
-    // default silently degrades to the bare `name` style.
-    if (mapStyle === "optional") {
-      const req = t.schema.required ?? [];
-      if (req.length) return `${code} ${t.name} ${req.join(",")}`;
-      const opt = Object.keys(t.schema.properties ?? {}).slice(0, 4);
-      return opt.length ? `${code} ${t.name} ?${opt.join(",")}` : `${code} ${t.name}`;
-    }
-    // A space costs fewer tokens than a comma at the same character count.
-    if (mapStyle === "compact") {
-      const req = t.schema.required ?? [];
-      return req.length ? `${code} ${t.name} ${req.join(" ")}` : `${code} ${t.name}`;
-    }
-    // `nocode`: the code already *is* the name, so emitting both would restore
-    // the duplication this style exists to remove.
-    if (mapStyle === "nocode") {
-      const req = t.schema.required ?? [];
-      return req.length ? `${t.name} ${req.join(",")}` : t.name;
-    }
-    return `${code} ${t.name}`;
+    if (req.length) return `${code} ${t.name} ${req.join(",")}`;
+    // No required parameters. `explicit` says so, because a bare name is
+    // indistinguishable from a tool whose parameters were omitted, and the model
+    // spends a lookup finding out it could have just called it.
+    return mapStyle === "explicit" ? `${code} ${t.name} ()` : `${code} ${t.name}`;
   };
 
-  // `grouped` factors the shared namespace prefix out of every line: real MCP
-  // names repeat it on each tool (google_maps_*), and at 100 tools that repetition
-  // measured ~22% of the map's tokens.
-  const groupedLines = (): string[] =>
-    [...groups].map(([ns, list]) => {
-      const req = (t: NormalizedTool) => t.schema.required ?? [];
-      // A group of one is never worth factoring, and for a name with no separator
-      // it is actively wrong: defaultNamespaceOf sets ns === op === name, so the
-      // line renders "customers: customers()" while the legend promises the full
-      // name is namespace_op. The model then builds "customers_customers", which
-      // does not exist. Observed on the real corpus: customers, fifo, intransit
-      // were all unreachable via the documented rule.
-      //
-      // So singletons are emitted as complete names, and the legend says a line
-      // with no colon is already a full name.
-      if (list.length < 2) {
-        return list
-          .map((t) => (req(t).length ? `${t.name} ${req(t).join(",")}` : t.name))
-          .join("\n");
-      }
-      const ops = list
-        .map((t) => (req(t).length ? `${t.op}(${req(t).join(",")})` : `${t.op}()`))
-        .join(" ");
-      return `${ns}: ${ops}`;
-    });
-
-  const lines =
-    mapStyle === "grouped"
-      ? groupedLines()
-      : // Codeless styles alias extra keys into codeToTool, so iterate the tools
-        // themselves to avoid emitting a line per alias.
-        codeless
-        ? tools.map((t) => renderLine(t.name, t))
-        : [...codeToTool.entries()].map(([code, t]) => renderLine(code, t));
+  const lines = [...codeToTool.entries()].map(([code, t]) => renderLine(code, t));
   const wire = [
     {
       name: "t",
-      description: codeless
-        ? "Invoke a tool by its name. Names are listed in <toolmap> in the system prompt."
-        : "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
+      description:
+        "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
       input_schema: {
         type: "object",
         properties: {
@@ -575,9 +417,8 @@ export function compress(
     },
     {
       name: "q",
-      description: codeless
-        ? "Expand a tool name to its full description and parameter signature (c), or search the map by keyword (s)."
-        : "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
+      description:
+        "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
       input_schema: {
         type: "object",
         properties: { c: { type: "string" }, s: { type: "string" } },
@@ -585,28 +426,14 @@ export function compress(
     },
   ];
   const mapLegend =
-    mapStyle === "name+required"
-      ? "Each line is: code name required-args. "
-      : mapStyle === "compact"
-        ? "Each line is: code name required-args, space separated. "
-        : mapStyle === "optional"
-          ? "Each line is: code name required-args; a leading ? marks a tool whose parameters are all optional. "
-          : mapStyle === "explicit"
-            ? "Each line is: code name required-args. A line ending in () takes no required arguments and can be called with none. "
-      : mapStyle === "signature"
-        ? "Each line is: code name(args), where ? marks optional. "
-        : mapStyle === "nocode"
-          ? "Each line is: name required-args. "
-          : mapStyle === "grouped"
-            ? "Lines are grouped by namespace: `namespace: op(required-args) …`, and a tool's full name is namespace_op. A line with no colon is already a complete tool name. "
-            : "";
-  // Codeless styles must tell the model to pass the name, not a code, or it will
-  // hunt for a code column that is not there.
-  const invokeHint = codeless
-    ? "Invoke with t(f=<name>, a={…}). Use q to expand a name before calling if you are unsure of its parameters."
-    : "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
-  const sheet = options.cheatSheet ? cheatSheetFor(tools) : "";
-  const systemPreamble = `${sheet}<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
+    mapStyle === "signature"
+      ? "Each line is: code name(args), where ? marks optional. "
+      : mapStyle === "explicit"
+        ? "Each line is: code name required-args. A line ending in () takes no required arguments and can be called with none. "
+        : "Each line is: code name required-args. ";
+  const invokeHint =
+    "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
+  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 
   return finish(
     wire,

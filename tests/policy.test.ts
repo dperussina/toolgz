@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { compress } from "../src/index.js";
+import { compress, selectMapStyle } from "../src/index.js";
 import { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "../src/policy.generated.js";
 import type { Tool } from "../src/types.js";
 
@@ -52,38 +52,51 @@ describe("selection", () => {
   });
 
   it("honours an explicit style request", () => {
-    expect(style({ mapStyle: "grouped" })).toBe("grouped");
-    expect(style({ model: "gpt-5.6-sol", mapStyle: "terse" })).toBe("terse");
+    expect(style({ mapStyle: "signature" })).toBe("signature");
+    expect(style({ model: "gpt-5.6-sol", mapStyle: "explicit" })).toBe("explicit");
   });
 });
 
 describe("broken pairs are disallowed, and the fallback is visible", () => {
-  it("refuses a measured-unsafe pair and substitutes", () => {
-    const c = compress(TOOLS, { level: 3, model: "grok-4.5", mapStyle: "nocode" });
-    expect(c.stats.mapStyle).toBe(CONSERVATIVE_DEFAULT);
-    expect(c.stats.requestedMapStyle).toBe("nocode");
+  /**
+   * BROKEN is empty in 0.2.0: the one pair ever measured unsafe was `nocode` on
+   * grok-4.5, and that style was removed from the library outright — deleting a
+   * footgun beats documenting it.
+   *
+   * So the safety valve is tested against synthetic tables through the pure
+   * selectMapStyle(), rather than left uncovered until something breaks. That is why
+   * the function is exported.
+   */
+  const FAKE_BROKEN = [
+    { model: "some-model-1", mapStyle: "explicit" as const, reason: "answered with no tool call 19% of the time", n: 36, sweep: "2026-01-01T00-00-00" },
+  ];
+
+  it("refuses a measured-unsafe pair and substitutes the conservative default", () => {
+    const r = selectMapStyle({ model: "some-model-1", mapStyle: "explicit" }, [], FAKE_BROKEN);
+    expect(r.mapStyle).toBe(CONSERVATIVE_DEFAULT);
+    expect(r.requestedMapStyle).toBe("explicit");
   });
 
-  it("says why, naming the model and the evidence — never silent", () => {
-    const c = compress(TOOLS, { level: 3, model: "grok-4.5", mapStyle: "nocode" });
-    expect(c.stats.fallbackReason).toMatch(/grok-4\.5/);
-    expect(c.stats.fallbackReason).toMatch(/n=36/);
-    expect(c.stats.fallbackReason).toMatch(/sweep 2026-07-26/);
-  });
-
-  it("does not throw or write to the console", () => {
-    expect(() => compress(TOOLS, { level: 3, model: "grok-4.5", mapStyle: "nocode" })).not.toThrow();
+  it("says why, naming the model, the run count and the sweep — never silent", () => {
+    const r = selectMapStyle({ model: "some-model-1", mapStyle: "explicit" }, [], FAKE_BROKEN);
+    expect(r.fallbackReason).toMatch(/some-model-1/);
+    expect(r.fallbackReason).toMatch(/n=36/);
+    expect(r.fallbackReason).toMatch(/sweep 2026-01-01/);
   });
 
   it("only blocks the measured pair, not the style everywhere", () => {
-    expect(style({ model: "gemini-3.1-pro-preview", mapStyle: "nocode" })).toBe("nocode");
-    expect(style({ mapStyle: "nocode" })).toBe("nocode");
+    expect(selectMapStyle({ model: "other-model-2", mapStyle: "explicit" }, [], FAKE_BROKEN).mapStyle).toBe("explicit");
+    expect(selectMapStyle({ mapStyle: "explicit" }, [], FAKE_BROKEN).mapStyle).toBe("explicit");
   });
 
   it("reports no fallback when nothing was substituted", () => {
-    const c = compress(TOOLS, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
-    expect(c.stats.fallbackReason).toBeUndefined();
-    expect(c.stats.requestedMapStyle).toBeUndefined();
+    const r = selectMapStyle({ model: "some-model-1", mapStyle: "signature" }, [], FAKE_BROKEN);
+    expect(r.fallbackReason).toBeUndefined();
+    expect(r.requestedMapStyle).toBeUndefined();
+  });
+
+  it("BROKEN is empty, and that is asserted rather than assumed", () => {
+    expect(BROKEN).toEqual([]);
   });
 });
 

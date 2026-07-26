@@ -207,7 +207,7 @@ ranking stability rather than averaging it away.
 
 ### Bare names fail on grok-4.5 — deterministically
 
-`mapStyle: "name"` scored **57/60** overall: perfect on Anthropic, Google and OpenAI, and
+`mapStyle: "name"` (removed in 0.2.0) scored **57/60** overall: perfect on Anthropic, Google and OpenAI, and
 **12/15 on grok-4.5**. The failures were not noise. All three were the same scenario
 (`acc-cross-product`), all with `turns=1`, zero tool calls, zero malformed arguments — the
 model read the map and answered without dispatching. No error was raised.

@@ -99,12 +99,6 @@ export const hybrid = fromLibrary(
   { level: 2 },
 );
 
-export const minified = fromLibrary(
-  "minified",
-  "Arm A · minified codes, bare names in map",
-  { level: 3, mapStyle: "name" },
-);
-
 /** The shipped level-3 default, so the sweep always covers what users get. */
 export const minifiedDefault = fromLibrary(
   "minified-default",
@@ -113,17 +107,6 @@ export const minifiedDefault = fromLibrary(
 );
 
 // ── arm-A variants, also library configurations ─────────────────────────────
-
-/**
- * The configuration the original 150-run sweep actually measured, before the
- * divergence was found. Kept so the two can be compared head to head instead
- * of assumed equivalent.
- */
-export const minifiedTerse = fromLibrary(
-  "minified-terse",
-  "Arm A′ · minified, terse descriptors in map",
-  { level: 3, mapStyle: "terse" },
-);
 
 /**
  * Hardening candidate. Arm A's one measured weakness is malformed arguments —
@@ -177,7 +160,6 @@ export const ARMS: CompressionStrategy[] = [
   signatures,
   nativeSearch,
   hybrid,
-  minified,
 ];
 
 /** Arm-A variants, opted into with --variants. */
@@ -186,67 +168,6 @@ export const minifiedSig = fromLibrary(
   "minified-sig",
   "Arm A‴ · minified + full signature in map",
   { level: 3, mapStyle: "signature" },
-);
-
-/**
- * Codeless candidates. The shipped map writes a code AND the real name, paying
- * for identity twice; on 149 real MCP tools that duplication measured 18-22% of
- * the level-3 token cost. Dropping the code also removes an observed failure mode
- * (a model calling the map code as the tool name).
- *
- * Included here so the size win is judged against accuracy rather than on its own.
- */
-export const minifiedNocode = fromLibrary(
-  "minified-nocode",
-  "Arm A⁗ · no codes, name + required args",
-  { level: 3, mapStyle: "nocode" },
-);
-
-export const minifiedGrouped = fromLibrary(
-  "minified-grouped",
-  "Arm A⁵ · namespace-grouped, no codes",
-  { level: 3, mapStyle: "grouped" },
-);
-
-/**
- * Same information and same map contract as the shipped default, serialised more
- * cheaply: space instead of comma between required args (identical character count,
- * fewer tokens on every tokenizer measured) and a flat two-letter code. Measured
- * -14.4% map tokens on claude-opus-5 and -16.6% on gpt-5.6-sol against a character
- * reduction of only 3.5%, which is why it was found in tokens and not in bytes.
- */
-export const minifiedCompact = fromLibrary(
-  "minified-compact",
-  "Arm A⁶ · token-optimised serialization",
-  { level: 3, mapStyle: "compact" },
-);
-
-/**
- * A generated `<toolgz>` cheat sheet ahead of the map. Targets the dominant cost:
- * on the real catalogue 44% of tools declare no required parameters, so the map
- * shows them as a bare name and hides 451 optional parameters behind a lookup —
- * and lookups drove a 6x cost swing in tier 2. 21 shared names cover 402 of those
- * 451 slots, so the sheet states them once for +580 chars where a per-tool listing
- * costs +3,240.
- */
-export const minifiedSheet = fromLibrary(
-  "minified-sheet",
-  "Arm A⁷ · default + generated cheat sheet",
-  { level: 3, cheatSheet: true },
-);
-
-/** The per-tool alternative, kept so the cheaper design is measured against it. */
-export const minifiedOptional = fromLibrary(
-  "minified-optional",
-  "Arm A⁸ · optional params in the map line",
-  { level: 3, mapStyle: "optional" },
-);
-
-/** Tier-2 winner plus the sheet, since the two are orthogonal. */
-export const minifiedNocodeSheet = fromLibrary(
-  "minified-nocode-sheet",
-  "Arm A⁹ · nocode + generated cheat sheet",
-  { level: 3, mapStyle: "nocode", cheatSheet: true },
 );
 
 /**
@@ -262,15 +183,8 @@ export const minifiedExplicit = fromLibrary(
 );
 
 export const A_VARIANTS: CompressionStrategy[] = [
-  minifiedTerse,
   minifiedPlus,
   minifiedSig,
-  minifiedNocode,
-  minifiedGrouped,
-  minifiedCompact,
-  minifiedSheet,
-  minifiedOptional,
-  minifiedNocodeSheet,
   minifiedExplicit,
 ];
 
@@ -279,16 +193,8 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: control, opts: { level: 0 } },
   { arm: signatures, opts: { level: 1 } },
   { arm: hybrid, opts: { level: 2 } },
-  { arm: minified, opts: { level: 3, mapStyle: "name" } },
   { arm: minifiedDefault, opts: { level: 3 } },
-  { arm: minifiedTerse, opts: { level: 3, mapStyle: "terse" } },
   { arm: minifiedPlus, opts: { level: 3, mapStyle: "name+required" } },
   { arm: minifiedSig, opts: { level: 3, mapStyle: "signature" } },
-  { arm: minifiedNocode, opts: { level: 3, mapStyle: "nocode" } },
-  { arm: minifiedGrouped, opts: { level: 3, mapStyle: "grouped" } },
-  { arm: minifiedCompact, opts: { level: 3, mapStyle: "compact" } },
-  { arm: minifiedSheet, opts: { level: 3, cheatSheet: true } },
-  { arm: minifiedOptional, opts: { level: 3, mapStyle: "optional" } },
-  { arm: minifiedNocodeSheet, opts: { level: 3, mapStyle: "nocode", cheatSheet: true } },
   { arm: minifiedExplicit, opts: { level: 3, mapStyle: "explicit" } },
 ];

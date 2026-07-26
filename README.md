@@ -75,29 +75,52 @@ claim about real deployments.
   <img src="docs/img/savings-light.svg" alt="Prompt tokens saved versus uncompressed tool definitions, by compression level, for each of four providers">
 </picture>
 
-| Provider | Model | Tool block | Prompt tokens | Cost | Latency | Tasks |
-|---|---|---:|---:|---:|---:|:-:|
-| Anthropic | `claude-opus-5` | 9,242 → **1,284** | 30,817 → **4,628** (−85%) | **−78%** | 15.0s → **12.1s** | 15/15 |
-| xAI | `grok-4.5` | 6,421 → **775** | 17,522 → **2,663** (−85%) | **−70%** | 6.1s → **4.6s** | 15/15 |
-| Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,302** (−79%) | **−62%** | 5.6s → **5.5s** | 15/15 |
-| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,694 → **2,196** (−71%) | *see below* | 6.8s → **5.6s** | 15/15 |
+| Provider | Model | Tool block | Prompt tokens | Latency | Tasks |
+|---|---|---:|---:|---:|:-:|
+| Anthropic | `claude-opus-5` | 9,242 → **1,284** | 30,817 → **4,628** (**−85%**) | 15.0s → **12.1s** | 15/15 |
+| xAI | `grok-4.5` | 6,421 → **775** | 17,522 → **2,663** (**−85%**) | 6.1s → **4.6s** | 15/15 |
+| Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,302** (**−79%**) | 5.6s → **5.5s** | 15/15 |
+| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,694 → **2,196** (**−71%**) | 6.8s → **5.6s** | 15/15 |
 
 Reasoning is enabled on all four at high effort, so this is a like-for-like frontier
 comparison. **60/60 tasks completed, zero hallucinated tool names, zero malformed
 arguments** — and it is faster than uncompressed on every provider.
 
-Every number above is recomputable from the raw per-run records in
-[`bench/results/`](bench/results) with `npx tsx bench/analyze-multi.ts --sweep=2026-07-25T19-19`.
+Recompute any figure with
+`npx tsx bench/analyze-multi.ts --sweep=2026-07-25T19-19` against the raw per-run
+records in [`bench/results/`](bench/results).
 
-> **We do not claim a cost saving on OpenAI.** The cost column is blank there on
-> purpose. A `−7%` figure is defensible as a mean, but OpenAI's uncompressed cost is
-> heavily right-skewed — mean $0.0172 against a median of $0.0052 — so a handful of
-> expensive runs make compression look break-even. On the *typical* run compression is
-> about **2.5× dearer** there ($0.0129 median against $0.0052). The token and latency
-> wins on OpenAI are real and reproduce; the cost win does not.
->
-> The other three providers hold up on both statistics: Anthropic −78% mean / −77%
-> median, xAI −70% / −62%, Google −62% / −58%.
+### What about cost?
+
+**Cost is not the claim, and we deliberately do not lead with it.** Prompt caching
+already makes tool tokens cheap. What caching does not do is give you the *room* back,
+and the room is what you run out of.
+
+Cost does usually fall as a side effect, by an amount that depends on your provider
+and reasoning settings — and on one of four providers we measured, it does not fall at
+all. On `gpt-5.6-sol` the uncompressed cost distribution is heavily right-skewed (mean
+$0.0172, median $0.0052), so a few expensive runs make compression look break-even
+while the *typical* run gets about 2.5× dearer. We used to publish a "−7% on OpenAI"
+figure. It was a mean over a skewed distribution and we withdrew it.
+
+If you do want to optimise the bill, it is one option — and it is a trade, not a
+freebie:
+
+```ts
+compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
+```
+
+| Model | Median cost vs default |
+|---|---:|
+| `gpt-5.6-sol` | **−20.7%** |
+| `gemini-3.1-pro-preview` | **−15.4%** |
+| `claude-opus-5` | **−9.0%** |
+| `grok-4.5` | **+13.2%** — so it is not enabled there |
+
+From 432 runs, 36 per style per provider, on the real 149-tool corpus. **What you give
+up:** a slightly larger cached map (+275 characters), and on `grok-4.5` a worse bill —
+which is why that row keeps the default rather than the cost-optimised style. Omit
+`objective` and you get the conservative default everywhere, unchanged.
 
 ### It does not make the model worse
 
@@ -116,33 +139,28 @@ problem and looks up what it needs. The default map style exists because of the 
 bare tool names failed on `grok-4.5` **deterministically**, 3 of 3 attempts on one scenario,
 answering with zero tool calls and no error raised. Naming the required arguments fixed it.
 
-### Cost, and why it took two rounds to get right
+### How we found the cost story, and got it wrong twice
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/cost-dark.svg">
-  <img src="docs/img/cost-light.svg" alt="Prompt tokens and cost both reduced on all four providers">
+  <img src="docs/img/cost-light.svg" alt="Prompt tokens and cost, by compression level, for each of four providers">
 </picture>
 
-The first cross-provider sweep found cost going **up 15% on OpenAI** even while context fell
-69%. The dispatcher was spending extra turns, and on a reasoning model every turn pays for a
-fresh round of thinking.
+The first cross-provider sweep found cost going **up 15% on OpenAI** even while context
+fell 69%. The dispatcher was spending extra turns, and on a reasoning model every turn
+pays for a fresh round of thinking.
 
-So we captured the calls that were being rejected instead of guessing, and found three bugs
-in *this library*: models pass `query` to a parameter named `q` (14 of 18 rejections), they
-sometimes call the map code as the tool name, and they sometimes pass arguments flat instead
-of nested. Fixing all three took OpenAI from **+15% to −7%** and drove malformed arguments to
-**zero on every provider**.
+So we captured the calls being rejected instead of guessing, and found three bugs in
+*this library*: models pass `query` to a parameter named `q` (14 of 18 rejections), they
+sometimes call the map code as the tool name, and they sometimes pass arguments flat
+instead of nested. Fixing all three drove malformed arguments to **zero on every
+provider**. Later rounds found three more of the same kind — a namespace joined with a
+dot, the lookup tool routed through the dispatcher — all shipped in 0.1.2.
 
-That took OpenAI's *mean* cost from +15% to −8%. It did not make compression cheaper on
-OpenAI in general: by median it is still ~2.5× dearer there, because reasoning output
-dominates the bill and a smaller prompt barely moves the total. We used to publish that
-−7% as a saving. It was a mean over a heavily skewed distribution, and reporting it that
-way was wrong.
-
-**Context-window occupancy is the primary claim, not cost.** Prompt caching already makes
-tool tokens cheap; it does not reclaim the room they occupy. Cost follows by an amount
-that depends on your provider and reasoning settings, and on one of four providers we
-measured it does not follow at all.
+That is the honest shape of this work: **most of the wins came from accepting what
+models actually send, not from making the map smaller.** One extra turn is worth ~3,300
+prompt tokens; the best encoding change available was worth ~550. Six map styles were
+tried and removed in 0.2.0 because they were smaller and still worse.
 
 ---
 
@@ -237,16 +255,21 @@ Four things worth knowing:
   effect-size floor — so there is nothing to select. Only `cost` has entries.
 - **An absent model gets the default.** That is an absence of evidence, not a
   prediction. `gpt-5.6-sol` behaving one way says nothing certain about `gpt-5.7`.
-- **A style measured unsafe on your model is refused**, and `stats.fallbackReason`
-  tells you why rather than substituting silently. Currently one entry: `nocode` on
-  `grok-4.5`, which failed 19% of runs by answering with no tool call at all.
+- **`stats` always tells you what was actually used**, so nothing is substituted
+  silently:
 
 ```ts
-const c = compress(myTools, { level: 3, model: "grok-4.5", mapStyle: "nocode" });
-c.stats.mapStyle;         // "name+required" — substituted
-c.stats.requestedMapStyle // "nocode"
-c.stats.fallbackReason    // why, with the run count and sweep
+const c = compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
+c.stats.mapStyle;          // "explicit" — what was used
+c.stats.requestedMapStyle; // undefined — you did not ask for a specific style
+c.stats.fallbackReason;    // undefined — nothing was substituted
 ```
+
+There is also a safety valve: if a future sweep finds a `(model, style)` pair that
+fails, it is refused and `stats.fallbackReason` says why. **That table is currently
+empty** — the one pair ever measured unsafe was `nocode` on `grok-4.5` (19% of runs
+answered with no tool call at all), and rather than document a footgun we deleted the
+style in 0.2.0.
 
 ---
 
