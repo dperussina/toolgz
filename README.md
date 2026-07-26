@@ -438,6 +438,35 @@ style in 0.2.0.
 
 ---
 
+## See it run
+
+A demo you can put on a screen. It prints every step — the tool definitions going in,
+what `compress()` turns them into, the request, the model's actual response, the
+`resolve()` translation, and your dispatcher running unchanged.
+
+```bash
+npm run demo -- --level=3          # one level, every step
+npm run demo -- --compare          # levels 0, 1 and 3 back to back
+npm run demo -- --level=3 --offline   # no API key: scripted model, real library
+```
+
+`--compare` ends with the side-by-side:
+
+```
+  level  wire tools  definition chars  reclaimed  turns  argument checking
+  0      6 → 6       3,283 → 3,289     -0.2%      2      provider
+  1      6 → 6       3,283 → 1,999     39.1%      2      provider
+  3      6 → 2       3,283 → 807       75.4%      2      toolgz
+```
+
+It really runs the loop against a real model unless you pass `--offline`, and it says
+which it did. Level 3 also demonstrates the two outcomes a happy path never shows —
+a bad code coming back `kind: "error"` and recoverable, and a `q()` lookup coming back
+`kind: "meta"` with nothing dispatched.
+
+Not shipped in the npm package: it imports a provider SDK, which is a devDependency,
+and the library's zero-runtime-dependency guarantee is not negotiable.
+
 ## Runnable examples
 
 Five files in [`examples/`](examples), all offline — no API key, no cost. Every one is
@@ -951,10 +980,36 @@ number can be recomputed rather than trusted.
 | `mapStyle` | `"name+required" \| "explicit" \| "signature"` | `"name+required"` | level 3 only |
 | `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–3 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
+| `signaturePrefix` | `boolean` | `true` | level 1 only; see below |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
 | `validate` | `boolean` | `true` | **leave this on** |
 | `model` | `string` | — | exact model id; picks the measured style. Omit and nothing changes |
 | `objective` | `"occupancy" \| "cost"` | `"occupancy"` | what the pick optimises. Only `cost` has entries |
+
+#### `signaturePrefix` — measured, and not the default for a reason
+
+Level 1 prepends `name(a,b?) — ` to each description while keeping the full
+`input_schema`. That prefix restates the tool name, property names, required list, enums
+and item types that the schema already carries, and it is **18.5% of the level-1
+payload** on the real corpus. Setting it `false` makes level 1 strictly smaller — 45.2%
+→ **55.3%** on 149 real tools — and removes the case where level 1 *inflates* a terse
+catalogue at all (−14.4% → −0.6%, which is level 0's own floor).
+
+It stays `true` by default because size was not the question. Over 64 live runs, removing
+it was a clear win on three providers and **not** on the fourth:
+
+| Provider | Block | Median cost | Turns |
+|---|---:|---:|---|
+| `gemini-3.1-pro-preview` | −18.5% | −15.3% | 2.00 → 2.00 |
+| `gpt-5.6-sol` | −26.0% | −13.8% | 2.38 → 2.13 |
+| `grok-4.5` | −18.2% | −17.2% | 3.00 → 3.00 |
+| `claude-opus-5` | −18.3% | **+3.8%** | **3.88 → 4.63** |
+
+On `claude-opus-5` the smaller block is spent on extra turns, and one turn is worth
+~3,300 prompt tokens here. **Zero malformed arguments and zero hallucinated names on both
+arms, 64/64 tasks.** So it is safe either way; it is just not universally cheaper. Try it
+if you are not on Anthropic, and measure. Full write-up in
+[docs/RESULTS.md](docs/RESULTS.md) Round 7.
 
 Returns:
 

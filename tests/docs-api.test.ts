@@ -149,8 +149,16 @@ describe("the API reference documents the whole surface", () => {
   const types = readFileSync("src/types.ts", "utf8");
   const readme = read("README.md");
   const keysOf = (name: string) => {
-    const m = types.match(new RegExp(`export type ${name} = \\\\{([\\\\s\\\\S]*?)\\\\n\\\\};`));
-    return [...(m?.[1] ?? "").matchAll(/^ {2}(\w+)\??[:(]/gm)].map((x) => x[1]);
+    // The escaping here was wrong for its whole life: `\\{` in the pattern matches a
+    // literal backslash, so match() returned null, keysOf returned [], and both
+    // assertions below compared two empty arrays. A guard written to catch `model` and
+    // `objective` going undocumented could never have caught them, and it did miss
+    // `signaturePrefix`. Hence the emptiness check that follows.
+    const m = types.match(new RegExp(`export type ${name} = \\{([\\s\\S]*?)\\n\\};`));
+    const keys = [...(m?.[1] ?? "").matchAll(/^ {2}(\w+)\??[:(]/gm)].map((x) => x[1]);
+    // A drift guard that can pass on nothing is not a guard.
+    expect(keys.length, `extracted no fields from ${name} — the guard is broken, not satisfied`).toBeGreaterThan(3);
+    return keys;
   };
 
   it("documents every CompressOptions field", () => {

@@ -170,8 +170,15 @@ recommendLevel(tools, namespaceOf?) → { level, reason, toolCount, namespaceCou
 selectMapStyle(options) → { mapStyle, requestedMapStyle?, fallbackReason? }   // pure
 ```
 
-`CompressOptions`: `level`, `mapStyle`, `namespaceOf`, `aliasOf`, `searchLimit`,
-`validate`, `model`, `objective`.
+`CompressOptions`: `level`, `mapStyle`, `namespaceOf`, `aliasOf`, `signaturePrefix`,
+`searchLimit`, `validate`, `model`, `objective`.
+
+`signaturePrefix` (level 1, default true) controls the `name(a,b?) — ` prefix on each
+description. Setting it false makes level 1 smaller — 45.2% → 55.3% on real MCP tools —
+and measured cheaper on Gemini, OpenAI and xAI over 64 runs. On `claude-opus-5` it was
+**+3.8% dearer** because turns rose 3.88 → 4.63. Safe either way (zero malformed
+arguments on both arms); not universally cheaper. Do not set it without measuring your
+own workload.
 
 `CompressResult`: `tools`, `systemPreamble`, `cachePreamble`, `resolve()`, `codeFor()`,
 `encodeCallForTest()`, `stats`.

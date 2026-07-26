@@ -86,6 +86,24 @@ export type CompressOptions = {
   namespaceOf?: (toolName: string) => { ns: string; op: string };
   /** Override the short alias used for a namespace at level 2. */
   aliasOf?: (ns: string) => string;
+  /**
+   * Level 1 only. Prepend `name(a,b?)` to each description. Default true, which is
+   * the historical behaviour and what every published level-1 figure was measured with.
+   *
+   * **Experimental, and measured before it may become a default.** The prefix is fully
+   * redundant with the `input_schema` level 1 retains — the model already has the tool
+   * name, the property names, the required list, the enums and the item types — and it
+   * costs 18.5% of the level-1 payload on the real 149-tool corpus. Setting this false
+   * makes level 1 strictly smaller and removes the case where level 1 *inflates* a
+   * terse catalogue.
+   *
+   * It is not the default because "smaller" is not the question. Every arm that
+   * measured clean — zero malformed arguments, no extra turns — had the prefix, and a
+   * one-line signature may be easier for a model to read than the equivalent JSON.
+   * Whether that matters at level 1, where the schema is present anyway, is a
+   * benchmark result and not yet in hand.
+   */
+  signaturePrefix?: boolean;
   /** Cap how many results a search/query meta-call returns. Default 8. */
   searchLimit?: number;
   /** Validate arguments against the original schema before dispatch. Default true. */

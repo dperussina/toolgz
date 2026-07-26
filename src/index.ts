@@ -302,11 +302,14 @@ export function compress(
   // Level 1 — signature flattening, native tools, real names
   // -------------------------------------------------------------------------
   if (level === 1) {
+    const withSig = options.signaturePrefix ?? true;
     const wire = tools.map((t) => {
       const d = firstSentence(t.description);
+      // With no description the signature is the only content there is, so it stays
+      // regardless — an empty description would leave the model nothing to read.
       return {
         name: t.name,
-        description: d ? `${signatureLine(t)} — ${d}` : signatureLine(t),
+        description: withSig || !d ? (d ? `${signatureLine(t)} — ${d}` : signatureLine(t)) : d,
         input_schema: flattenSchema(t.schema),
       };
     });

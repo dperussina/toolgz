@@ -205,3 +205,64 @@ describe("namespaceOf contract", () => {
     expect(k.tools.length).toBeGreaterThan(0);
   });
 });
+
+describe("a map code used as the tool name, with the dispatcher's own arg wrapper", () => {
+  /**
+   * Observed live on claude-opus-5 while building the demo CLI, in a single call:
+   *
+   *   a2({"f":"a2","a":"{\"q\": \"repo:acme/web TypeError ...\"}"})
+   *
+   * Three deviations at once. The model used the map *code* as the tool name instead
+   * of calling `t`; it kept the `{f, a}` wrapper anyway; and it passed `a` as a JSON
+   * *string* rather than an object. The library absorbed all three and dispatched
+   * correctly — `asObject` parses the string, and the code resolves as a name.
+   *
+   * That behaviour was already there but untested, so a refactor could have removed
+   * it silently and the only symptom would have been a wasted turn in production.
+   */
+  const CODE = () => compress(TOOLS, { level: 3 }).codeFor("gdrive_sheets_append_rows");
+
+  it("accepts exactly what the model sent: code as name, a as a JSON string", () => {
+    const k = compress(TOOLS, { level: 3 });
+    const code = k.codeFor("gdrive_sheets_append_rows");
+    const r = k.resolve(code, { f: code, a: JSON.stringify(ARGS) });
+    expect(r.kind).toBe("call");
+    if (r.kind === "call") {
+      expect(r.name).toBe("gdrive_sheets_append_rows");
+      expect(r.args).toEqual(ARGS);
+    }
+  });
+
+  it("accepts the same shape with a as an object", () => {
+    const k = compress(TOOLS, { level: 3 });
+    const code = k.codeFor("gdrive_sheets_append_rows");
+    const r = k.resolve(code, { f: code, a: ARGS });
+    expect(r.kind).toBe("call");
+    if (r.kind === "call") expect(r.args).toEqual(ARGS);
+  });
+
+  it("accepts a code as the name with the args passed flat", () => {
+    const k = compress(TOOLS, { level: 3 });
+    const r = k.resolve(k.codeFor("gdrive_sheets_append_rows"), ARGS);
+    expect(r.kind).toBe("call");
+  });
+
+  it("parses a JSON-string arg bag through the dispatcher too", () => {
+    const k = compress(TOOLS, { level: 3 });
+    const r = k.resolve("t", { f: k.codeFor("gdrive_sheets_append_rows"), a: JSON.stringify(ARGS) });
+    expect(r.kind).toBe("call");
+    if (r.kind === "call") expect(r.args).toEqual(ARGS);
+  });
+
+  it("does not treat a non-JSON string arg bag as valid", () => {
+    // Garbage must not silently become an empty object that then passes validation.
+    const k = compress(TOOLS, { level: 3 });
+    const r = k.resolve("t", { f: k.codeFor("gdrive_sheets_append_rows"), a: "not json at all" });
+    expect(r.kind, "a required-arg tool with no parsable args must be an error").toBe("error");
+  });
+
+  it("still refuses a code that does not exist, used as a name", () => {
+    expect(compress(TOOLS, { level: 3 }).resolve("zz9", { f: "zz9", a: {} }).kind).toBe("error");
+    expect(CODE()).not.toBe("zz9");
+  });
+});

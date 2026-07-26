@@ -5,7 +5,7 @@
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
 **Round 5** — same four providers, after hardening the resolver from observed failures
 **Round 6** — real MCP tools: 149 tools from 14 live servers, replacing the synthetic fixture
-**Total**: 3,203 runs across rounds 1–6, in 13 sweeps · 2026-07-25/26 (counted from the committed JSONL, not estimated)
+**Total**: 3,283 runs across rounds 1–7, in 15 sweeps · 2026-07-25/26 (counted from the committed JSONL, not estimated)
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
 **Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze-multi.ts --sweep=<timestamp>` — the `--sweep` flag is required, because pooling runs blends library versions
 
@@ -538,6 +538,74 @@ signature line, and overshot by ~34%; the estimate now tracks the real count wit
 (42,654 estimated against 41,648 measured).
 
 ---
+
+## Round 7 — the level-1 signature prefix, and a fourth provider split
+
+Sweeps `2026-07-26T16-31-21` (tier 0, 16 runs) and `2026-07-26T16-37-11` (tier 1, 64
+runs). Real suite, 149 tools, `--arms=signatures,signatures-noprefix`.
+
+### The question
+
+Level 1 prepends `name(a,b?) — ` to every description while keeping the full
+`input_schema`. That prefix restates the tool name, the property names, the required
+list, the enums and the item types — all of which the retained schema already carries.
+It is **18.5% of the level-1 payload** on the real corpus.
+
+An external reviewer had measured level 1 *inflating* a terse catalogue by ~15%, which
+is what prompted this: the prefix is the whole reason it can inflate.
+
+Offline, removing it is strictly better on size:
+
+| Fixture | with prefix | without | Δ |
+|---|---:|---:|---:|
+| 149 real tools | 45.2% | **55.3%** | +10.1pp |
+| 14 real tools | 59.0% | **65.2%** | +6.2pp |
+| 50 terse tools | −14.4% | **−0.6%** | +13.8pp |
+| 100 terse tools, 8 properties | −24.3% | **−0.3%** | +24.0pp |
+
+Note the floor: **−0.6% is level 0's own figure** (`c.tools` is Anthropic-shaped and
+`input_schema` is one character longer than `inputSchema`). Without the prefix, level 1
+can no longer make a payload bigger — at worst it does nothing.
+
+### What the live runs said
+
+Size is not the question, though. Every arm that ever measured clean had the prefix, and
+a one-line signature may simply be easier for a model to read than the equivalent JSON.
+
+Tier 1, n=8 per arm per provider, **64/64 tasks, zero hallucinated names, zero malformed
+arguments on both arms**:
+
+| Provider | Block | Prompt | Median cost | Turns | Latency |
+|---|---:|---:|---:|---|---:|
+| `gemini-3.1-pro-preview` | −18.5% | −17.8% | **−15.3%** | 2.00 → 2.00 | +0.4% |
+| `gpt-5.6-sol` | −26.0% | −33.6% | **−13.8%** | 2.38 → 2.13 | −2.4% |
+| `grok-4.5` | −18.2% | −17.9% | **−17.2%** | 3.00 → 3.00 | −10.9% |
+| `claude-opus-5` | −18.3% | **−2.0%** | **+3.8%** | **3.88 → 4.63** | −0.1% |
+
+**On Anthropic the block shrinks 18% and the saving is spent on extra turns.** Not one
+outlier — per-run turns went `4 4 5 5 3 4 3 3` with the prefix and `6 5 6 4 5 5 3 3`
+without, so 6 of 8 runs needed ≥5 turns against 2 of 8. One turn is worth ~3,300 prompt
+tokens on this suite, which is most of what an 18% block reduction buys.
+
+This is the **fourth** time the same split has appeared: Gemini and OpenAI reward
+information density changes, Anthropic and xAI often do not. Here xAI sides with Gemini,
+which is new.
+
+### Decision
+
+**The default does not move.** `signaturePrefix` ships as an option defaulting to
+`true` — every published level-1 figure was measured with it, and flipping a default on
+n=8 with one provider contradicting is exactly the mistake the tier ladder exists to
+prevent.
+
+What it plausibly earns is a **per-model policy row** rather than a global default,
+alongside `mapStyle`. That needs tier 2 to establish whether the Anthropic turn
+increase is real: +19% clears the 5% effect floor and the per-run pattern is
+consistent, but n=8 is n=8.
+
+**Open**: tier 2 on `claude-opus-5` specifically, which is the contested cell. At
+~$0.83/run it is the expensive one to answer, and the answer decides default-flip
+versus policy-row versus option-only.
 
 ## Findings
 

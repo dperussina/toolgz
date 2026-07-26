@@ -38,7 +38,7 @@ export {
   flattenSchema,
 } from "../../src/render/index.js";
 
-type LibOpts = { level: 0 | 1 | 2 | 3; mapStyle?: MapStyle };
+type LibOpts = { level: 0 | 1 | 2 | 3; mapStyle?: MapStyle; signaturePrefix?: boolean };
 
 /**
  * Wrap a library configuration as an arm.
@@ -182,7 +182,28 @@ export const minifiedExplicit = fromLibrary(
   { level: 3, mapStyle: "explicit" },
 );
 
+/**
+ * Level 1 without the `name(a,b?)` prefix on each description.
+ *
+ * Offline the prefix is pure cost: it restates the tool name, property names, required
+ * list, enums and item types that level 1's retained `input_schema` already carries, and
+ * it is 18.5% of the level-1 payload on the real corpus. Dropping it takes real tools
+ * from 45.2% to 55.3%, and takes a terse catalogue from -14.4% (inflating) to -0.6%,
+ * which is the level-0 floor — so level 1 would stop being able to make things worse.
+ *
+ * The open question is not size, it is whether a model reads a one-line signature more
+ * reliably than the equivalent JSON. At level 1 the schema is present either way, so the
+ * prefix may be redundant for the model too — but every arm that measured clean had it,
+ * so this arm exists to find out rather than to assume.
+ */
+export const signaturesNoPrefix = fromLibrary(
+  "signatures-noprefix",
+  "Arm C′ · L1 without the signature prefix",
+  { level: 1, signaturePrefix: false },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
+  signaturesNoPrefix,
   minifiedPlus,
   minifiedSig,
   minifiedExplicit,
@@ -197,4 +218,5 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedPlus, opts: { level: 3, mapStyle: "name+required" } },
   { arm: minifiedSig, opts: { level: 3, mapStyle: "signature" } },
   { arm: minifiedExplicit, opts: { level: 3, mapStyle: "explicit" } },
+  { arm: signaturesNoPrefix, opts: { level: 1, signaturePrefix: false } },
 ];
