@@ -1,6 +1,6 @@
 {
   "name": "toolgz",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Compress LLM tool definitions to reclaim context window. Measured across Anthropic, OpenAI, Google and xAI.",
   "main": "dist/index.js",
   "scripts": {
