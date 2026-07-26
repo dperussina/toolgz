@@ -36,14 +36,48 @@ function step(n: number, title: string, sub?: string) {
   if (sub) console.log(`        ${dim(sub)}`);
   console.log();
 }
-/** Indent a block and cap runaway output, so a demo never scrolls off screen. */
-function block(s: string, indent = "  ", maxLines = 14) {
-  const lines = s.split("\n");
-  const shown = lines.slice(0, maxLines);
-  for (const l of shown) console.log(indent + l);
-  if (lines.length > maxLines) console.log(indent + dim(`… ${lines.length - shown.length} more lines`));
+const TERM = Math.max(60, Math.min(process.stdout.columns ?? 100, 120));
+
+/**
+ * Soft-wrap to the terminal, preserving the indent.
+ *
+ * Never truncates. An earlier version capped every block at 6-14 lines, which cut the
+ * model's final answer off mid-markdown-table — right at the header separator, so the
+ * rows never appeared and it read as "the table is broken".
+ */
+function block(s: string, indent = "  ", tone: (x: string) => string = (x) => x) {
+  const room = Math.max(20, TERM - indent.length);
+  // `tone` is applied per emitted line rather than to the whole string, so ANSI escapes
+  // never count toward the wrap width and can never be split down the middle.
+  const put = (l: string) => console.log(indent + tone(l));
+  for (const raw of s.split("\n")) {
+    if (raw.length <= room) { put(raw); continue; }
+    // Never re-wrap a markdown table row or a fenced code line: inserting an indent
+    // mid-row destroys the alignment that makes it readable. Let the terminal decide.
+    if (/^\s*\|/.test(raw) || (raw.match(/\|/g) ?? []).length >= 2) { put(raw); continue; }
+    let cur = "";
+    for (const word of raw.split(" ")) {
+      if (cur && (cur + " " + word).length > room) { put(cur); cur = word; }
+      else cur = cur ? `${cur} ${word}` : word;
+    }
+    if (cur) put(cur);
+  }
+}
+
+/** Deliberate summarising, where showing every item is noise rather than information. */
+function summarised(lines: string[], indent: string, show: number, what: string) {
+  for (const l of lines.slice(0, show)) console.log(indent + l);
+  if (lines.length > show) console.log(indent + dim(`(${lines.length - show} more ${what} not shown)`));
 }
 const n = (x: number) => x.toLocaleString();
+/** Truncate on a word boundary, so a preview never ends "in th". */
+function clip(s: string, max: number): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(" ");
+  return (at > max * 0.5 ? cut.slice(0, at) : cut).replace(/[,;:.]$/, "") + "…";
+}
 
 // ── the tools, and a dispatcher that actually does something ────────────────
 const TOOLS: Tool[] = [
@@ -174,11 +208,11 @@ function showTransform(level: Level) {
         const props = Object.keys(t.inputSchema?.properties ?? {});
         return [
           bold(t.name),
-          dim(`  "${(t.description ?? "").slice(0, 62)}…"`),
+          dim(`  "${clip(t.description ?? "", 64)}"`),
           dim(`  { ${props.map((k) => (req.has(k) ? `${k}${red("*")}` : dim(k))).join(", ")} }`),
         ].join("\n");
       })
-      .join("\n") + dim(`\n… and ${TOOLS.length - 2} more`),
+      .join("\n") + dim(`\n(${TOOLS.length - 2} more tools not shown)`),
   );
 
   const pct = c.stats.savedPct;
@@ -193,16 +227,16 @@ function showTransform(level: Level) {
       .slice(0, 3)
       .map((t: any) => {
         const props = Object.keys(t.input_schema?.properties ?? {});
-        return `${cyan(t.name)}(${props.join(", ")})\n${dim(`   ${String(t.description ?? "").slice(0, 66)}`)}`;
+        return `${cyan(t.name)}(${props.join(", ")})\n${dim(`   ${clip(String(t.description ?? ""), TERM - 8)}`)}`;
       })
-      .join("\n") + (c.tools.length > 3 ? dim(`\n… ${c.tools.length - 3} more`) : ""),
+      .join("\n") + (c.tools.length > 3 ? dim(`\n(${c.tools.length - 3} more not shown)`) : ""),
     "    ",
   );
 
   if (c.systemPreamble) {
     console.log();
     console.log(`  ${bold("APPENDED TO YOUR SYSTEM PROMPT")} ${dim(c.cachePreamble ? "(behind a cache breakpoint)" : "")}`);
-    block(c.systemPreamble.trim(), "    ", 12);
+    block(c.systemPreamble.trim(), "    ");
   } else {
     console.log();
     console.log(`  ${dim("system preamble: empty — nothing to add at this level")}`);
@@ -278,7 +312,8 @@ async function run(level: Level, opts: { offline: boolean; model: string }): Pro
   console.log();
   banner(`toolgz demo · level ${level}${opts.offline ? " · offline (scripted model)" : ` · ${opts.model}`}`);
   console.log();
-  console.log(`  ${dim("task:")} ${TASK}`);
+  console.log(`  ${dim("task:")}`);
+  block(TASK, "    ", dim);
 
   const c = showTransform(level);
 
@@ -300,7 +335,7 @@ async function run(level: Level, opts: { offline: boolean; model: string }): Pro
 
     if (!turn.calls.length) {
       step(sNum++, "Model response — no tool call, so it is done");
-      block(turn.text || dim("(no text)"), "  ", 6);
+      block(turn.text || "(no text)", "  ");
       break;
     }
 
@@ -320,12 +355,13 @@ async function run(level: Level, opts: { offline: boolean; model: string }): Pro
         console.log(`  ${dim("your dispatcher runs unchanged:")}`);
         const out = await myDispatch(r.name, r.args);
         dispatches.push(r.name);
-        console.log(`      ${blue(r.name)} → ${dim(JSON.stringify(out).slice(0, 96))}`);
+        console.log(`      ${blue(r.name)} →`);
+        block(JSON.stringify(out), "        ", dim);
         results.push({ type: "tool_result", tool_use_id: call.id, content: JSON.stringify(out) });
       } else if (r.kind === "meta") {
         lookups++;
         console.log(`  ${mag("→ kind: \"meta\"")}   ${dim("toolgz answered this itself — nothing was dispatched")}`);
-        block(r.result, "      ", 6);
+        block(r.result, "      ");
         results.push({ type: "tool_result", tool_use_id: call.id, content: r.result });
       } else {
         errors++;
@@ -376,7 +412,7 @@ async function run(level: Level, opts: { offline: boolean; model: string }): Pro
     if (look.kind === "meta") {
       console.log(`    ${dim('model searches the map: q(s="issue")')}`);
       console.log(`    ${mag('→ kind: "meta"')}   ${dim("toolgz answers; nothing is dispatched")}`);
-      block(look.result, "      ", 5);
+      block(look.result, "      ");
     }
     console.log(rule());
   }
