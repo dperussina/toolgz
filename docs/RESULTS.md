@@ -207,7 +207,7 @@ ranking stability rather than averaging it away.
 
 ### Bare names fail on grok-4.5 — deterministically
 
-`mapStyle: "name"` scored **57/60** overall: perfect on Anthropic, Google and OpenAI, and
+`mapStyle: "name"` (removed in 0.2.0) scored **57/60** overall: perfect on Anthropic, Google and OpenAI, and
 **12/15 on grok-4.5**. The failures were not noise. All three were the same scenario
 (`acc-cross-product`), all with `turns=1`, zero tool calls, zero malformed arguments — the
 model read the map and answered without dispatching. No error was raised.
@@ -323,6 +323,76 @@ The fixes drove the **shipped default** to zero on every provider, and the arms
 that still produce errors (`hybrid`, bare-name `minified`, `terse`) are the ones
 we do not recommend. Reporting only the default's improvement without this would
 overstate what changed.
+
+---
+
+## Round 6 — real MCP tools, and the corpus becomes the benchmark of record
+
+Rounds 1–5 all used one synthetic catalogue. Round 6 replaced it, because the fixture
+turned out to flatter at least one compression style: `grouped` measured **−21%** on
+the fixture purely because every tool name carried a `namespace_op` prefix to factor
+out, and **−1%** on real MCP tools, which mostly do not.
+
+**The corpus.** 149 tools harvested from 14 live MCP servers by speaking MCP over
+stdio (`initialize` → `tools/list`) and recording exactly what each advertised.
+Committed at `bench/fixtures/real-mcp-tools.json`, with 12 scenarios in
+`bench/scenarios-real.ts` built on confusable pairs that already existed in the
+catalogue — ten weekly/daily twins separated only by a `_daily` suffix, rollup vs
+`_detail`, `order_path` vs `order_path_financial`, Sheets overwrite vs append.
+
+**Uncompressed it is 68,494 prompt tokens on `claude-opus-5`** — more than twice the
+synthetic fixture, and about a third of a 200k window before the user types anything.
+
+### The dominant cost driver is lookups, not map size
+
+Measured across 658 runs: target tools with **zero required parameters** averaged
+**1.42 lookups and 4.26 turns**, against **0.42 and 2.79** for tools with required
+parameters. That is 3.4× the lookups. **44% of the real corpus (66 of 149 tools)
+declares no required parameters**, so their map line is a bare name — indistinguishable
+from a tool whose parameters were omitted.
+
+For scale: one extra turn is worth roughly **3,300 prompt tokens** (within-scenario,
+controlled), against a whole-map saving of ~550 for the best encoding change tried.
+**Map-size work is worth about one sixth of a turn.** That single ratio explains every
+encoding result in this round.
+
+### Tier 3 — 432 runs, 36 per arm per provider
+
+| Arm | Tasks | Result |
+|---|---|---|
+| `explicit` | **144/144** | turns and lookups down on **all four** providers |
+| `name+required` | 143/144 | the shipped default |
+| `nocode` | 137/144 | **19% failure rate on grok-4.5** |
+
+`explicit` marks zero-required tools `()` for +275 characters — it states the fact the
+model lacks, rather than naming the parameters (which cost 13× more and measured +41%).
+
+Median cost against the default: **OpenAI −20.7%, Gemini −15.4%, Anthropic −9.0%,
+xAI +13.2%**. Occupancy was a wash everywhere (±3.1%, under the 5% floor).
+
+### `nocode` — the result that mattered most
+
+It beat the default on **occupancy on all four providers** (−11.6% to −15.5%) and is
+**not shippable**. At tier 3 it failed 7 of 36 xAI runs, and **all seven were silent**:
+`turns=1`, no tool call, no error, the model answering unaided. Four different
+scenarios, so not scenario-specific.
+
+It had passed 12/12 on xAI in an earlier sweep. **The intermittency is the finding** —
+a candidate can clear a tier-2 gate and still be broken, which is why the ladder keeps
+all four providers at every tier and why occupancy alone never justifies a default.
+
+### Method corrections forced by this round
+
+Three of them, each having produced a confidently wrong answer first:
+
+- **Cost was being averaged across providers.** An Anthropic run costs ~10× the others
+  here, so the mean reported Anthropic. One style read +7.8% on that mean while being
+  −39% on Gemini. `analyze-multi.ts` no longer prints the aggregate.
+- **Results were being pooled across sweeps.** Three resolver bugs were fixed
+  mid-round; a pooled task rate of 53/58 described no version of the code that ever
+  existed. `--sweep=` is now required.
+- **The charts had the same pooling bug**, and would have published 70% where the
+  results table says 85%. They now pin to one sweep.
 
 ---
 
@@ -446,8 +516,28 @@ below that tier.
 
 Guard-rails for anyone else writing about this:
 
-- ❌ "80% cheaper" — it is not. Cost rose 15% on OpenAI. The claim is
-  **context-window occupancy**.
+- ❌ "80% cheaper" — it is not. The claim is **context-window occupancy**.
+- ❌ **Any cost saving on OpenAI.** Verified against sweep `2026-07-25T19-19`: the
+  uncompressed distribution there is heavily right-skewed (mean $0.0172, median
+  $0.0052), so the `−7%` we used to publish was a mean artifact. By median,
+  compression is ~2.5× *dearer* on `gpt-5.6-sol`. The token and latency wins are real;
+  the cost win is not. Decision #29.
+- ❌ **Any cost figure averaged across providers.** An Anthropic run costs ~10× a
+  Gemini/OpenAI/xAI run on this suite, so the mean reports Anthropic and little else.
+  One map style measured +7.8% on that mean while being −39% on Gemini and −16% on
+  OpenAI. Compare within a provider, or quote the median. `bench/analyze-multi.ts`
+  refuses to print the aggregate. Decision #25.
+- ❌ **Any figure pooled across sweeps.** Three resolver bugs were fixed mid-session,
+  so pooling blends library versions: a pooled task rate of 53/58 once described no
+  version of the code that ever existed. The analysis tool requires `--sweep=`.
+- ❌ **"Smaller than `@atlassian/mcp-compressor`."** It is not. Measured with
+  `count_tokens` on both a real 19-tool MCP set and a 100-tool fixture, their `max`
+  mode beat our shipped default on every corpus tested (788 vs 854 tokens; 1,540 vs
+  2,191). Our encoder is denser — their `<tool>` format costs ~40% more in tokens than
+  our map — but they ship the more aggressive configuration. The defensible claims are
+  zero runtime dependencies against their 82 packages and five prebuilt `.node`
+  binaries, an L1 that preserves provider-side constrained decoding, and published
+  cross-provider accuracy data.
 - ❌ "Works on any model" — measured on four frontier models from four vendors.
   Below the frontier tier, argument errors rise sharply (17/30 runs on
   Haiku 4.5, all recovered).

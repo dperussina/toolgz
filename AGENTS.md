@@ -129,10 +129,56 @@ Full text in `docs/CONSTITUTION.md`. The load-bearing ones:
 ## Stack
 
 TypeScript / Node 22+, ESM. `tsx` to run, `vitest` to test, `tsc` to build.
-Zero runtime dependencies in the shipped package.
+
+### Zero dependencies is a hard constraint, not a preference
+
+The shipped package imports **nothing outside the Node standard library**. No
+runtime dependencies, and no native addon. `tests/packaging.test.ts` enforces it:
+a declared runtime dependency must be one `src/` actually imports, and today that
+set is empty.
+
+Dev-only tooling (`vitest`, `tsx`, provider SDKs for the benchmark) is fine —
+those live in `devDependencies` and are not published. The line is `src/`.
+
+**No Rust / native layer.** It was considered and rejected on measurement, not
+taste:
+
+- Compression here is string building. There is no hot loop to optimise.
+- Measured against `@atlassian/mcp-compressor`, which does use a Rust core: plain
+  JS **0.097ms** vs their **0.376ms**. We are ~4x faster *without* Rust, because
+  compute was never the bottleneck.
+- The cost is not hypothetical. Their native payload is **80MB** across five
+  prebuilt `.node` binaries, delivered via the deprecated `prebuild-install`. Our
+  whole package is **23.7kB**.
+
+A native addon would trade a real, verifiable differentiator for a speedup nobody
+can perceive behind a multi-second LLM round trip.
+
+**Where a dependency will be tempting:** local tokenization. Optimising the map
+encoding for a tokenizer wants a tokenizer, and `tiktoken` et al are native. Keep
+that work in `bench/` as a devDependency, or use the providers' `count_tokens`
+endpoints. It must never reach `src/`.
+
+### Escalate through the tiers; never skip to tier 3
 
 ```bash
-npm test          # 71 unit tests, no network
+npm run bench:tier1   # 4 hardest scenarios x 1 rep x 4 providers  ~$3   kills broken ideas
+npm run bench:tier2   # 6 scenarios x 2 reps x 4 providers         ~$8   kills marginal ones
+npm run bench:tier3   # all 12 scenarios x 3 reps x 4 providers    ~$25  promotes a default
+```
+
+**Cut scenarios, cut reps, never cut providers.** Every failure found so far has been
+provider-specific and unpredictable by reasoning: bare names died only on grok-4.5,
+`grouped` died only on gpt-5.6-sol. A cheap single-provider screen is how you ship a
+broken default; all four providers on four scenarios costs a few dollars and catches
+it in the first reps.
+
+These exist as scripts because the rule was written down as a decision and then
+broken the same day, by launching a 384-run tier-3 sweep containing a brand-new,
+behaviourally untested map style. A guideline you have to remember is not a control.
+
+```bash
+npm test          # unit tests, no network
 npm run build     # tsc → dist/ with .d.ts
 npm run bench     # the sweep — COSTS MONEY, ~$4-8 per full run
 npm run brain     # brain CLI

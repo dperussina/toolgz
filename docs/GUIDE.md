@@ -193,13 +193,20 @@ It also turned out cheaper, not dearer: the extra few tokens per line remove a
 `q()` discovery round-trip, so the whole conversation is shorter. Fewer turns,
 fewer tokens, fewer argument errors.
 
-Three other styles exist if you have a reason:
+Two other styles exist if you have a reason:
 
 ```ts
 compress(myTools, { level: 3, mapStyle: "signature" }); // full signature; removes lookups
-compress(myTools, { level: 3, mapStyle: "name" });      // smallest map; verify your model copes
-compress(myTools, { level: 3, mapStyle: "terse" });     // descriptor instead of the name
+compress(myTools, { level: 3, mapStyle: "explicit" });  // marks tools needing no args
 ```
+
+Prefer reaching `explicit` through `{ model, objective: "cost" }` rather than by hand
+— it saves 9–21% on three providers and costs 13% more on `grok-4.5`, and the policy
+table knows which is which.
+
+Four further styles (`name`, `terse`, `nocode`, `grouped`) existed before 0.2.0 and
+were removed because they measured worse. `mapStyle` now throws on them rather than
+silently ignoring the value. See docs/RESULTS.md Round 6.
 
 **`signature`** puts the whole parameter list in the map
 (`a0 github_create_issue(owner,repo,title,body?,labels?)`), so the model never

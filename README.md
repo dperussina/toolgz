@@ -1,6 +1,6 @@
 <h1>toolgz</h1>
 
-<p><strong>Your agent spends 30–50k tokens of context on tool definitions before the user types a word. toolgz gets ~80% of it back.</strong></p>
+<p><strong>Your agent spends 30–70k tokens of context on tool definitions before the user types a word. toolgz gets ~80% of it back.</strong></p>
 
 <p>
 <a href="#measured-results">420-run cross-provider sweep</a> ·
@@ -51,23 +51,76 @@ if (r.kind === "call") await myDispatch(r.name, r.args);   // real name, real ar
 Four frontier models, seven strategies, five tool-selection tasks, 3 reps —
 **420 runs** on the current sweep, 1,200+ across all rounds. Every raw per-run record is
 committed in [`bench/results/`](bench/results/); recompute any figure with
-`npx tsx bench/analyze-multi.ts`.
+`npx tsx bench/analyze-multi.ts --sweep=<timestamp>`.
+
+**The table below uses a synthetic catalogue** — 100 realistic-but-invented MCP-style
+tools across 9 namespaces — because it lets us build deliberately confusable clusters
+that a real catalogue may not contain. Two things follow from that, and the first is
+uncomfortable:
+
+- Synthetic naming can flatter a compression style. One map style measured −21% on
+  this fixture because every tool name carried a `namespace_op` prefix to factor out.
+  On real MCP tools, which mostly do not, the same style was worth −1%.
+- Real catalogues are **bigger**, so these numbers understate the problem. A corpus of
+  **149 tools harvested from 14 live MCP servers** measures **68,494 prompt tokens**
+  uncompressed on `claude-opus-5` — more than twice the synthetic fixture, and about a
+  third of a 200k context window before the user types anything.
+
+The real corpus is committed at [`bench/fixtures/real-mcp-tools.json`](bench/fixtures/real-mcp-tools.json)
+with its own scenario suite (`--suite=real`), and it is the corpus of record for any
+claim about real deployments.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/savings-dark.svg">
   <img src="docs/img/savings-light.svg" alt="Prompt tokens saved versus uncompressed tool definitions, by compression level, for each of four providers">
 </picture>
 
-| Provider | Model | Tool block | Prompt tokens | Cost | Latency | Tasks |
-|---|---|---:|---:|---:|---:|:-:|
-| Anthropic | `claude-opus-5` | 9,242 → **1,284** | 30,817 → **4,628** (−85%) | **−78%** | 15.0s → **12.1s** | 15/15 |
-| xAI | `grok-4.5` | 6,421 → **775** | 17,522 → **2,663** (−85%) | **−70%** | 6.1s → **4.6s** | 15/15 |
-| Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,302** (−79%) | **−62%** | 5.6s → **5.5s** | 15/15 |
-| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,694 → **2,196** (−71%) | **−7%** | 6.8s → **5.6s** | 15/15 |
+| Provider | Model | Tool block | Prompt tokens | Latency | Tasks |
+|---|---|---:|---:|---:|:-:|
+| Anthropic | `claude-opus-5` | 9,242 → **1,284** | 30,817 → **4,628** (**−85%**) | 15.0s → **12.1s** | 15/15 |
+| xAI | `grok-4.5` | 6,421 → **775** | 17,522 → **2,663** (**−85%**) | 6.1s → **4.6s** | 15/15 |
+| Google | `gemini-3.1-pro-preview` | 5,264 → **732** | 10,948 → **2,302** (**−79%**) | 5.6s → **5.5s** | 15/15 |
+| OpenAI | `gpt-5.6-sol` | 2,752 → **573** | 7,694 → **2,196** (**−71%**) | 6.8s → **5.6s** | 15/15 |
 
 Reasoning is enabled on all four at high effort, so this is a like-for-like frontier
 comparison. **60/60 tasks completed, zero hallucinated tool names, zero malformed
 arguments** — and it is faster than uncompressed on every provider.
+
+Recompute any figure with
+`npx tsx bench/analyze-multi.ts --sweep=2026-07-25T19-19` against the raw per-run
+records in [`bench/results/`](bench/results).
+
+### What about cost?
+
+**Cost is not the claim, and we deliberately do not lead with it.** Prompt caching
+already makes tool tokens cheap. What caching does not do is give you the *room* back,
+and the room is what you run out of.
+
+Cost does usually fall as a side effect, by an amount that depends on your provider
+and reasoning settings — and on one of four providers we measured, it does not fall at
+all. On `gpt-5.6-sol` the uncompressed cost distribution is heavily right-skewed (mean
+$0.0172, median $0.0052), so a few expensive runs make compression look break-even
+while the *typical* run gets about 2.5× dearer. We used to publish a "−7% on OpenAI"
+figure. It was a mean over a skewed distribution and we withdrew it.
+
+If you do want to optimise the bill, it is one option — and it is a trade, not a
+freebie:
+
+```ts
+compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
+```
+
+| Model | Median cost vs default |
+|---|---:|
+| `gpt-5.6-sol` | **−20.7%** |
+| `gemini-3.1-pro-preview` | **−15.4%** |
+| `claude-opus-5` | **−9.0%** |
+| `grok-4.5` | **+13.2%** — so it is not enabled there |
+
+From 432 runs, 36 per style per provider, on the real 149-tool corpus. **What you give
+up:** a slightly larger cached map (+275 characters), and on `grok-4.5` a worse bill —
+which is why that row keeps the default rather than the cost-optimised style. Omit
+`objective` and you get the conservative default everywhere, unchanged.
 
 ### It does not make the model worse
 
@@ -86,26 +139,28 @@ problem and looks up what it needs. The default map style exists because of the 
 bare tool names failed on `grok-4.5` **deterministically**, 3 of 3 attempts on one scenario,
 answering with zero tool calls and no error raised. Naming the required arguments fixed it.
 
-### Cost, and why it took two rounds to get right
+### How we found the cost story, and got it wrong twice
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/cost-dark.svg">
-  <img src="docs/img/cost-light.svg" alt="Prompt tokens and cost both reduced on all four providers">
+  <img src="docs/img/cost-light.svg" alt="Prompt tokens and cost, by compression level, for each of four providers">
 </picture>
 
-The first cross-provider sweep found cost going **up 15% on OpenAI** even while context fell
-69%. The dispatcher was spending extra turns, and on a reasoning model every turn pays for a
-fresh round of thinking.
+The first cross-provider sweep found cost going **up 15% on OpenAI** even while context
+fell 69%. The dispatcher was spending extra turns, and on a reasoning model every turn
+pays for a fresh round of thinking.
 
-So we captured the calls that were being rejected instead of guessing, and found three bugs
-in *this library*: models pass `query` to a parameter named `q` (14 of 18 rejections), they
-sometimes call the map code as the tool name, and they sometimes pass arguments flat instead
-of nested. Fixing all three took OpenAI from **+15% to −7%** and drove malformed arguments to
-**zero on every provider**.
+So we captured the calls being rejected instead of guessing, and found three bugs in
+*this library*: models pass `query` to a parameter named `q` (14 of 18 rejections), they
+sometimes call the map code as the tool name, and they sometimes pass arguments flat
+instead of nested. Fixing all three drove malformed arguments to **zero on every
+provider**. Later rounds found three more of the same kind — a namespace joined with a
+dot, the lookup tool routed through the dispatcher — all shipped in 0.1.2.
 
-OpenAI's −7% is still the smallest saving, and honestly so: reasoning output dominates its
-bill, so a smaller prompt moves the total less. **Context-window occupancy remains the
-primary claim** — cost follows from it, by an amount that depends on your reasoning settings.
+That is the honest shape of this work: **most of the wins came from accepting what
+models actually send, not from making the map smaller.** One extra turn is worth ~3,300
+prompt tokens; the best encoding change available was worth ~550. Six map styles were
+tried and removed in 0.2.0 because they were smaller and still worse.
 
 ---
 
@@ -165,6 +220,56 @@ returns a model-readable error instead. That is why `validate` defaults to on �
 **[docs/BEFORE-AFTER.md](docs/BEFORE-AFTER.md)** for the full tools array and system prompt,
 before and after, at every level, with real token counts and a live encode → decode round
 trip. A test asserts that file matches the code, so it cannot drift.
+
+---
+
+## Optional: let the library pick the map style for your model
+
+Level 3 has several map styles. Which one is cheapest turns out to depend on the
+model, so you can hand `compress()` a model id and let it use what was actually
+measured:
+
+```ts
+compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
+```
+
+| Model | Style chosen for `cost` | Measured against the default |
+|---|---|---:|
+| `gpt-5.6-sol` | `explicit` | **−20.7%** |
+| `gemini-3.1-pro-preview` | `explicit` | **−15.4%** |
+| `claude-opus-5` | `explicit` | **−9.0%** |
+| `grok-4.5` | *default* | `explicit` measured **+13.2%** there |
+
+From a 432-run sweep, 36 runs per style per provider, on the real 149-tool corpus.
+`explicit` completed 144/144 tasks and cut lookups on all four providers; only the
+*cost* consequence differs by model. The table lives in
+[`src/policy.generated.ts`](src/policy.generated.ts), is generated from the committed
+results, and a test fails if it drifts from them.
+
+Four things worth knowing:
+
+- **Omitting `model` changes nothing.** Existing behaviour is byte-identical; there
+  is a test asserting that.
+- **`objective` defaults to `occupancy`, which has no table.** Every style we
+  measured landed within ±3.1% of the default on context occupancy — under our 5%
+  effect-size floor — so there is nothing to select. Only `cost` has entries.
+- **An absent model gets the default.** That is an absence of evidence, not a
+  prediction. `gpt-5.6-sol` behaving one way says nothing certain about `gpt-5.7`.
+- **`stats` always tells you what was actually used**, so nothing is substituted
+  silently:
+
+```ts
+const c = compress(myTools, { level: 3, model: "gpt-5.6-sol", objective: "cost" });
+c.stats.mapStyle;          // "explicit" — what was used
+c.stats.requestedMapStyle; // undefined — you did not ask for a specific style
+c.stats.fallbackReason;    // undefined — nothing was substituted
+```
+
+There is also a safety valve: if a future sweep finds a `(model, style)` pair that
+fails, it is refused and `stats.fallbackReason` says why. **That table is currently
+empty** — the one pair ever measured unsafe was `nocode` on `grok-4.5` (19% of runs
+answered with no tool call at all), and rather than document a footgun we deleted the
+style in 0.2.0.
 
 ---
 

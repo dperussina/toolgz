@@ -33,13 +33,20 @@ import {
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
 import { nearest } from "./runtime/similar.js";
+import { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
+import type { PolicyEntry, BrokenEntry } from "./policy.generated.js";
 
 export * from "./types.js";
 export { flattenSchema, signatureLine, countSchemaTokensApprox } from "./render/index.js";
+// Exported so consumers can see WHY a style was chosen. The generated file is not in
+// the published tarball (only dist/ ships), so without this the policy is a black box
+// and the README could point at something a user cannot read.
+export { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
+export type { PolicyEntry, BrokenEntry, Objective } from "./policy.generated.js";
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
 const LEVELS: Level[] = [0, 1, 2, 3];
-const MAP_STYLES: MapStyle[] = ["name", "name+required", "signature", "terse"];
+const MAP_STYLES: MapStyle[] = ["name+required", "explicit", "signature"];
 
 const err = (message: string, recoverable = true): Resolution => ({
   kind: "error",
@@ -65,6 +72,50 @@ function defaultAlias(ns: string): string {
   return ns;
 }
 
+
+
+/**
+ * Choose the level-3 map style, and report anything it had to substitute.
+ *
+ * Pure and exported so the disallow path is testable against synthetic tables. It
+ * used to be inline in `compress()`, which meant it could only be exercised through
+ * a real BROKEN entry — and once the one unsafe style was removed from the library
+ * there were none, leaving the safety valve untested.
+ *
+ * Order: an explicit request wins unless measured unsafe for that model; then the
+ * measured policy for (model, objective); then the conservative default.
+ */
+export function selectMapStyle(
+  options: Pick<CompressOptions, "mapStyle" | "model" | "objective">,
+  policy: readonly PolicyEntry[] = POLICY,
+  broken: readonly BrokenEntry[] = BROKEN,
+): { mapStyle: MapStyle; requestedMapStyle?: MapStyle; fallbackReason?: string } {
+  const objective = options.objective ?? "occupancy";
+
+  if (options.mapStyle) {
+    const unsafe = options.model
+      ? broken.find((b) => b.model === options.model && b.mapStyle === options.mapStyle)
+      : undefined;
+    if (!unsafe) return { mapStyle: options.mapStyle };
+    // Owner decision: disallow a measured-unsafe pair and fall back, rather than
+    // honour it with a warning. Reported, never silent.
+    return {
+      mapStyle: CONSERVATIVE_DEFAULT,
+      requestedMapStyle: options.mapStyle,
+      fallbackReason:
+        `mapStyle "${options.mapStyle}" is measured unsafe on ${unsafe.model}: ` +
+        `${unsafe.reason} (n=${unsafe.n}, sweep ${unsafe.sweep}). ` +
+        `Using "${CONSERVATIVE_DEFAULT}" instead.`,
+    };
+  }
+
+  if (options.model) {
+    const hit = policy.find((e) => e.model === options.model && e.objective === objective);
+    return { mapStyle: hit ? hit.mapStyle : CONSERVATIVE_DEFAULT };
+  }
+  return { mapStyle: CONSERVATIVE_DEFAULT };
+}
+
 export function compress(
   input: Tool[],
   options: CompressOptions = {},
@@ -83,7 +134,11 @@ export function compress(
   // 60/60 tasks, fewer malformed arguments, fewer lookup round-trips, and
   // faster wall-clock than uncompressed on every provider. The larger map pays
   // for itself by removing a discovery turn.
-  const mapStyle = options.mapStyle ?? "name+required";
+  const {
+    mapStyle,
+    requestedMapStyle,
+    fallbackReason,
+  } = selectMapStyle(options, POLICY, BROKEN);
   if (!MAP_STYLES.includes(mapStyle)) {
     throw new Error(
       `unsupported mapStyle: ${mapStyle} (expected ${MAP_STYLES.join(", ")})`,
@@ -110,6 +165,7 @@ export function compress(
   const codeToTool = new Map<string, NormalizedTool>();
   const toolToCode = new Map<string, string>();
   if (level === 3) {
+
     let ni = 0;
     for (const [, list] of groups) {
       // Two chars past 26 namespaces so codes stay unique and short.
@@ -182,6 +238,10 @@ export function compress(
       encodeCallForTest: encode,
       stats: {
         level,
+        mapStyle,
+        requestedMapStyle:
+          requestedMapStyle && requestedMapStyle !== mapStyle ? requestedMapStyle : undefined,
+        fallbackReason,
         toolCount: tools.length,
         wireToolCount: wire.length,
         originalChars,
@@ -330,15 +390,16 @@ export function compress(
   // against a full schema's ~400 — to reduce malformed arguments on models that
   // fill the generic argument bag poorly.
   const renderLine = (code: string, t: NormalizedTool): string => {
-    if (mapStyle === "terse") return `${code} ${terseDescriptor(t.description) || t.name}`;
+    const req = t.schema.required ?? [];
     // Full signature: optional params included, so the model rarely needs q().
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
-    if (mapStyle === "name+required") {
-      const req = t.schema.required ?? [];
-      return req.length ? `${code} ${t.name} ${req.join(",")}` : `${code} ${t.name}`;
-    }
-    return `${code} ${t.name}`;
+    if (req.length) return `${code} ${t.name} ${req.join(",")}`;
+    // No required parameters. `explicit` says so, because a bare name is
+    // indistinguishable from a tool whose parameters were omitted, and the model
+    // spends a lookup finding out it could have just called it.
+    return mapStyle === "explicit" ? `${code} ${t.name} ()` : `${code} ${t.name}`;
   };
+
   const lines = [...codeToTool.entries()].map(([code, t]) => renderLine(code, t));
   const wire = [
     {
@@ -365,12 +426,14 @@ export function compress(
     },
   ];
   const mapLegend =
-    mapStyle === "name+required"
-      ? "Each line is: code name required-args. "
-      : mapStyle === "signature"
-        ? "Each line is: code name(args), where ? marks optional. "
-        : "";
-  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.`;
+    mapStyle === "signature"
+      ? "Each line is: code name(args), where ? marks optional. "
+      : mapStyle === "explicit"
+        ? "Each line is: code name required-args. A line ending in () takes no required arguments and can be called with none. "
+        : "Each line is: code name required-args. ";
+  const invokeHint =
+    "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
+  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 
   return finish(
     wire,

@@ -99,12 +99,6 @@ export const hybrid = fromLibrary(
   { level: 2 },
 );
 
-export const minified = fromLibrary(
-  "minified",
-  "Arm A · minified codes, bare names in map",
-  { level: 3, mapStyle: "name" },
-);
-
 /** The shipped level-3 default, so the sweep always covers what users get. */
 export const minifiedDefault = fromLibrary(
   "minified-default",
@@ -113,17 +107,6 @@ export const minifiedDefault = fromLibrary(
 );
 
 // ── arm-A variants, also library configurations ─────────────────────────────
-
-/**
- * The configuration the original 150-run sweep actually measured, before the
- * divergence was found. Kept so the two can be compared head to head instead
- * of assumed equivalent.
- */
-export const minifiedTerse = fromLibrary(
-  "minified-terse",
-  "Arm A′ · minified, terse descriptors in map",
-  { level: 3, mapStyle: "terse" },
-);
 
 /**
  * Hardening candidate. Arm A's one measured weakness is malformed arguments —
@@ -177,7 +160,6 @@ export const ARMS: CompressionStrategy[] = [
   signatures,
   nativeSearch,
   hybrid,
-  minified,
 ];
 
 /** Arm-A variants, opted into with --variants. */
@@ -188,10 +170,22 @@ export const minifiedSig = fromLibrary(
   { level: 3, mapStyle: "signature" },
 );
 
+/**
+ * The cheap fix for the zero-required blind spot. 44% of real tools declare no
+ * required parameters, so their map line is a bare name and models spend a lookup
+ * confirming they can be called as-is. `explicit` says so for +275 characters, where
+ * naming the optional parameters (mapStyle "optional") cost +3,240 and measured +41%.
+ */
+export const minifiedExplicit = fromLibrary(
+  "minified-explicit",
+  "Arm B · mark zero-required tools ()",
+  { level: 3, mapStyle: "explicit" },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
-  minifiedTerse,
   minifiedPlus,
   minifiedSig,
+  minifiedExplicit,
 ];
 
 /** Maps each library-backed arm to the configuration it must equal. */
@@ -199,9 +193,8 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: control, opts: { level: 0 } },
   { arm: signatures, opts: { level: 1 } },
   { arm: hybrid, opts: { level: 2 } },
-  { arm: minified, opts: { level: 3, mapStyle: "name" } },
   { arm: minifiedDefault, opts: { level: 3 } },
-  { arm: minifiedTerse, opts: { level: 3, mapStyle: "terse" } },
   { arm: minifiedPlus, opts: { level: 3, mapStyle: "name+required" } },
   { arm: minifiedSig, opts: { level: 3, mapStyle: "signature" } },
+  { arm: minifiedExplicit, opts: { level: 3, mapStyle: "explicit" } },
 ];

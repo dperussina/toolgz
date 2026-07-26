@@ -20,6 +20,7 @@ import { mkdirSync, appendFileSync } from "node:fs";
 import { ARMS, A_VARIANTS } from "../strategies/index.js";
 import { SCENARIOS, type Scenario } from "../scenarios.js";
 import { ACCURACY_SCENARIOS } from "../scenarios-accuracy.js";
+import { REAL_SCENARIOS } from "../scenarios-real.js";
 import type { CompressionStrategy } from "../core/types.js";
 import type {
   ChatMessage,
@@ -42,9 +43,26 @@ const PORTABLE_ARMS: CompressionStrategy[] = ARMS.filter(
 
 /** --variants adds the arm-A hardening candidates. */
 const withVariants = process.argv.includes("--variants");
-const ACTIVE_ARMS: CompressionStrategy[] = withVariants
+let ACTIVE_ARMS: CompressionStrategy[] = withVariants
   ? [...PORTABLE_ARMS, ...A_VARIANTS]
   : PORTABLE_ARMS;
+
+// --arms=id,id restricts the sweep. This matters on the real-tool suite: the
+// uncompressed control arm alone is ~68,500 prompt tokens, so a full nine-arm
+// pass costs roughly an order of magnitude more than the synthetic suite. Being
+// able to price the baseline separately from the arms under test keeps a
+// comparison affordable without quietly reducing reps.
+const armsArg = process.argv.find((a) => a.startsWith("--arms="))?.slice(7);
+if (armsArg) {
+  const want = new Set(armsArg.split(",").map((s) => s.trim()).filter(Boolean));
+  const known = new Set([...PORTABLE_ARMS, ...A_VARIANTS].map((a) => a.id));
+  for (const id of want) {
+    if (!known.has(id)) {
+      throw new Error(`unknown arm "${id}". Known: ${[...known].sort().join(", ")}`);
+    }
+  }
+  ACTIVE_ARMS = [...PORTABLE_ARMS, ...A_VARIANTS].filter((a) => want.has(a.id));
+}
 
 async function loadProviders(which: string): Promise<Provider[]> {
   const out: Provider[] = [];
@@ -225,13 +243,32 @@ async function main() {
   const suiteName = arg("suite", "accuracy")!;
   const only = arg("scenario");
 
+  // `real` is the suite of record for claims about real deployments: 149 tools
+  // harvested from 14 live MCP servers. The synthetic fixture's ns_op naming
+  // flattered the grouped map style by ~21%, so results there do not transfer.
   const suite: Scenario[] =
     suiteName === "tokens"
       ? SCENARIOS
-      : suiteName === "both"
-        ? [...SCENARIOS, ...ACCURACY_SCENARIOS]
-        : ACCURACY_SCENARIOS;
-  const scenarios = only ? suite.filter((s) => s.id === only) : suite;
+      : suiteName === "real"
+        ? REAL_SCENARIOS
+        : suiteName === "both"
+          ? [...SCENARIOS, ...ACCURACY_SCENARIOS]
+          : suiteName === "all"
+            ? [...SCENARIOS, ...ACCURACY_SCENARIOS, ...REAL_SCENARIOS]
+            : ACCURACY_SCENARIOS;
+  // --scenario accepts a comma-separated list. A targeted re-test after a fix
+  // should not have to re-run the whole suite, and re-running everything is how a
+  // cheap verification quietly becomes a $25 one.
+  const wanted = only ? new Set(only.split(",").map((s) => s.trim()).filter(Boolean)) : null;
+  if (wanted) {
+    const ids = new Set(suite.map((s) => s.id));
+    for (const id of wanted) {
+      if (!ids.has(id)) {
+        throw new Error(`unknown scenario "${id}". Available: ${[...ids].join(", ")}`);
+      }
+    }
+  }
+  const scenarios = wanted ? suite.filter((s) => wanted.has(s.id)) : suite;
 
   const providers = await loadProviders(which);
   if (!providers.length) {
