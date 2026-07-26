@@ -443,3 +443,65 @@ describe("compact: same information, cheaper serialization", () => {
     expect(bad.map((t: any) => t.name)).toEqual([]);
   });
 });
+
+describe("observed on grok-4.5: the lookup tool routed through the dispatcher", () => {
+  /**
+   * Every malformed-argument event in the tier-1 real-tool run was this, across all
+   * four level-3 styles including the shipped default:
+   *
+   *   t(f="q", a={s: "lost freight"})              instead of q(s="lost freight")
+   *   t(f="q", a={c: "scorecard_lf_daily"})        instead of q(c="…")
+   *   t(f="q", a={c: "scorecard:edemand_detail"})  ditto, with a colon
+   *
+   * The preamble invites it: "Invoke with t(f=<name>, a={…})" followed by "Use q to
+   * expand a name" reads as "everything goes through t, including q". Every task
+   * still succeeded, but each rejection burned a turn — and on a reasoning model a
+   * turn is a fresh round of thinking.
+   *
+   * `t` and `q` are the library's own reserved names, so the intent is unambiguous.
+   */
+  const STYLES = ["name+required", "nocode", "grouped", "compact"] as const;
+
+  for (const mapStyle of STYLES) {
+    it(`${mapStyle}: accepts t(f="q") as a search`, () => {
+      const k = compress(TOOLS, { level: 3, mapStyle });
+      const r = k.resolve("t", { f: "q", a: { s: "issues" } });
+      expect(r.kind).toBe("meta");
+    });
+
+    it(`${mapStyle}: accepts t(f="q") as an expand`, () => {
+      const k = compress(TOOLS, { level: 3, mapStyle });
+      const r = k.resolve("t", { f: "q", a: { c: k.codeFor("github_create_issue") } });
+      expect(r.kind).toBe("meta");
+      if (r.kind === "meta") expect(r.result).toContain("github_create_issue");
+    });
+  }
+
+  it("accepts the lookup args passed flat rather than nested under a", () => {
+    const k = compress(TOOLS, { level: 3 });
+    const r = k.resolve("t", { f: "q", s: "issues" } as any);
+    expect(r.kind).toBe("meta");
+  });
+
+  it("unwraps a dispatcher nested inside itself", () => {
+    // t(f="t", a={f:<code>, a:{…}}) — same confusion, one level deeper.
+    const k = compress(TOOLS, { level: 3 });
+    const r = k.resolve("t", {
+      f: "t",
+      a: { f: k.codeFor("github_search_issues"), a: { q: "leak" } },
+    });
+    expect(r.kind).toBe("call");
+    if (r.kind === "call") expect(r.name).toBe("github_search_issues");
+  });
+
+  it("does not break a real tool that legitimately resolves", () => {
+    const k = compress(TOOLS, { level: 3 });
+    const r = k.resolve("t", { f: k.codeFor("github_create_issue"), a: { owner: "a", repo: "b", title: "c" } });
+    expect(r.kind).toBe("call");
+  });
+
+  it("still rejects a tool genuinely named neither t nor q", () => {
+    const k = compress(TOOLS, { level: 3 });
+    expect(k.resolve("t", { f: "zzz_not_a_tool", a: {} }).kind).toBe("error");
+  });
+});

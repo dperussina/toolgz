@@ -492,8 +492,27 @@ export function compress(
     wire,
     systemPreamble,
     true,
-    (name, rawArgs) => {
-      const args = asObject(rawArgs);
+    (rawName, rawArgs) => {
+      let name = rawName;
+      let args = asObject(rawArgs);
+
+      // Observed on grok-4.5 across every level-3 style, including the shipped
+      // default: the model routes the lookup tool through the dispatcher, calling
+      // t(f="q", a={s:"lost freight"}) instead of q(s="lost freight").
+      //
+      // The preamble invites this — it says "Invoke with t(f=<name>, a={…})" and
+      // then "Use q to expand a name", which reads as "everything goes through t,
+      // including q". Rejecting it cost a turn each time, and `t`/`q` are our own
+      // reserved names, so the intent is unambiguous: nothing else could be meant.
+      if (name === "t" && (args.f === "q" || args.f === "t")) {
+        const nested = asObject(args.a);
+        const flat = Object.fromEntries(
+          Object.entries(args).filter(([k]) => k !== "f" && k !== "a"),
+        );
+        name = String(args.f);
+        args = Object.keys(nested).length ? nested : flat;
+      }
+
       if (name === "q") {
         if (args.c !== undefined) {
           const t = lookupMapKey(args.c);
