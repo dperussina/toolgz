@@ -101,6 +101,55 @@ Recompute any figure with
 `npx tsx bench/analyze-multi.ts --sweep=2026-07-25T19-19` against the raw per-run
 records in [`bench/results/`](bench/results).
 
+### How it scales, measured on real tools
+
+The table above is a synthetic 100-tool fixture. This is the real one: **149 tools
+harvested from 14 live MCP servers**, scaled by replicating the corpus, measured with
+Anthropic's `count_tokens` and confirmed against live API calls.
+
+| Tools | Uncompressed | Level 3 | Reclaimed |
+|---:|---:|---:|---:|
+| 149 (the real corpus) | 68,536 | **3,022** | **95.6%** |
+| 435 | 199,822 | **8,690** | **95.7%** |
+| 800 | 368,826 | **16,006** | **95.7%** |
+| 1,200 | 552,795 | **23,880** | **95.7%** |
+
+**The ratio does not decay with scale.** Both the uncompressed block and the map grow
+linearly, so 95.7% holds from 149 tools to 1,200. Real MCP tools measure ~460 tokens
+each — 17% heavier than the ~393 in the published academic benchmark, so a real
+catalogue hits limits sooner than synthetic ones suggest.
+
+Which gives a practical ceiling per context window:
+
+| Context window | Tools that fit uncompressed | With level 3 |
+|---|---:|---:|
+| 8K (small/local models) | **17** | ~409 |
+| 32K | 71 | ~1,638 |
+| 200K (typical frontier cap) | **434** | ~10,000 |
+
+That 200K row is the one to note: **most deployments cap at 200k, making ~434 real
+tools a hard ceiling.** An independent study ([Sakizli 2026](https://github.com/SKZL-AI/tscg))
+measured the same threshold at ~494 tools using tools 17% lighter than ours — two
+separate measurements agreeing within about 15%.
+
+### What we could not test
+
+**We have not demonstrated that compression improves accuracy, and we do not claim it.**
+
+The published study above finds a *binary enablement* effect: at 8K with 28 tools,
+uncompressed schemas overflow the window and exact-match accuracy collapses to 2.6%,
+while compression restores it (+20.5pp average). At 32K, where both fit, four of five
+models show ≤1pp difference — the effect is **budget-driven, not intrinsic**.
+
+We tried to reproduce it and could not, for an honest reason: every provider we test
+against has a window far larger than our corpus needs. Uncompressed requests ran
+successfully at 149, 435 and **800 tools (368,826 tokens)** on `claude-opus-5`, picking
+the correct tool each time. Reaching overflow on a 1M window would take ~2,173 tools.
+
+So the enablement regime — where this stops being an optimisation and becomes a
+prerequisite — lives on **small-context models we do not currently test**. If you run
+local models at 8K–32K, that study is more relevant to you than our benchmarks are.
+
 ### What about cost?
 
 **Cost is not the claim, and we deliberately do not lead with it.** Prompt caching

@@ -410,6 +410,52 @@ Three of them, each having produced a confidently wrong answer first:
 
 ---
 
+### Round 6b — scale invariance, and a cliff we could not reach
+
+Two experiments after tier 3, both on the real corpus.
+
+**Compression is scale-invariant.** Measured with `count_tokens` and confirmed against
+live API calls on `claude-opus-5`, scaling the 149-tool corpus by replication:
+
+| Tools | Uncompressed | Level 3 | Reclaimed |
+|---:|---:|---:|---:|
+| 149 | 68,536 | 3,022 | 95.6% |
+| 435 | 199,822 | 8,690 | 95.7% |
+| 800 | 368,826 | 16,006 | 95.7% |
+| 1,200 | 552,795 | 23,880 | 95.7% |
+
+Both the uncompressed block and the map grow linearly in tool count, so the ratio holds.
+Real MCP tools measure **~460 tokens each**, against ~393 in Sakizli's published
+benchmark — real catalogues are ~17% heavier than synthetic ones.
+
+Practical ceiling per window: **17 tools at 8K, 71 at 32K, 434 at 200K.** That last
+figure independently corroborates the same paper's ~494-tool overflow threshold, measured
+on lighter tools — two separate measurements within ~15%.
+
+**The enablement cliff is not reachable with our providers.** Sakizli reports a binary
+enablement effect: at 8K with 28 tools, uncompressed schemas overflow and EM collapses to
+2.6%, while compression restores it (+20.5pp); at 32K, four of five models show ≤1pp,
+making the effect budget-driven rather than intrinsic.
+
+We tried to reproduce it. Uncompressed requests **ran successfully** at 149, 435 and 800
+tools (368,826 tokens) on `claude-opus-5`, selecting the correct tool every time. On a 1M
+window, overflow needs ~2,173 tools. All four providers we test have windows far larger
+than the corpus requires, so the overflow regime is unreachable; the paper used 1.5B–32B
+local models over Ollama at 8K/16K/32K.
+
+Recorded as blocked rather than concluded. **We have not shown that compression improves
+accuracy and do not claim it** — every result we have is from the regime where the paper
+predicts no effect.
+
+*Measurement note:* the first probe reported level 3 using 110 input tokens, which looked
+like a broken adapter. `usage.input_tokens` **excludes cached tokens**, and the Anthropic
+adapter places a `cache_control` breakpoint on the map — the preamble was in
+`cache_creation_input_tokens`. Total occupancy is
+`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. Second time this
+session a partial read of a multi-field measurement produced a wrong conclusion.
+
+---
+
 ## Findings
 
 ### 1. Name minification did not cost accuracy — the design's central worry was wrong
