@@ -22,13 +22,22 @@ reclamation is the product.
 
 ## Status: shipped, and still being measured
 
-Published as `toolgz` on npm — 0.2.0 at the time of writing. 249 tests, clean typecheck,
+Published as `toolgz` on npm — 0.2.0 at the time of writing. 251 tests, clean typecheck,
 zero runtime dependencies.
 
-Six benchmark rounds so far; `docs/RESULTS.md` is the evidence log and the only place
-figures live. **Do not restate a number in another document** — that is how the README
-came to advertise level 3's savings beside a level-1 code example. Link to RESULTS
-instead.
+Six benchmark rounds so far; `docs/RESULTS.md` is the evidence log.
+
+**Figures live in exactly two places and nowhere else:** `docs/RESULTS.md`, and the
+README's headline results table. That table is the one permitted restatement — a reader
+should not have to open another file to see the numbers — and it must name the sweep it
+came from so any figure can be recomputed with
+`npx tsx bench/analyze-multi.ts --sweep=<timestamp>`.
+
+Everywhere else, link instead of copying. Restating figures is how the README came to
+advertise level 3's savings beside a level-1 code example, and how the same claim reached
+both social drafts and the generated social card. **Every percentage must name the level
+that produces it** — level 1 saves 13–32%, level 3 saves 71–85%, and quoting the second
+next to a call that does the first is the defect to watch for.
 
 Do not re-run an old sweep to "check" it. Every figure is recomputable from the
 committed JSONL with `npx tsx bench/analyze-multi.ts --sweep=<timestamp>`.

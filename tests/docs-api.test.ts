@@ -161,3 +161,40 @@ describe("the API reference documents the whole surface", () => {
     expect(missing, `exported but undocumented: ${missing.join(", ")}`).toEqual([]);
   });
 });
+
+describe("documented imports name real exports", () => {
+  /**
+   * Doc code blocks cannot be typechecked standalone — they reference `myTools`, `block`
+   * and other caller-side variables by design. But their imports are checkable, and a
+   * rename or removal shows up there first.
+   */
+  it("every `from \"toolgz\"` import in the docs resolves", async () => {
+    const mod: Record<string, unknown> = await import("../src/index.js");
+    const providers: Record<string, unknown> = await import("../src/providers/index.js");
+    const known = new Set([...Object.keys(mod), ...Object.keys(providers)]);
+    const offenders: string[] = [];
+    for (const file of DOCS) {
+      for (const m of read(file).matchAll(/import\s*\{([^}]+)\}\s*from\s*"toolgz(?:\/providers)?"/g)) {
+        for (const raw of m[1].split(",")) {
+          const name = raw.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0];
+          if (name && !known.has(name)) offenders.push(`${file}: ${name}`);
+        }
+      }
+    }
+    expect(offenders, `docs import names that do not exist:\n  ${offenders.join("\n  ")}`).toEqual([]);
+  });
+
+  it("no doc calls a method that CompressResult does not have", () => {
+    const types = readFileSync("src/types.ts", "utf8");
+    const m = types.match(/export type CompressResult = \{([\s\S]*?)\n\};/);
+    const members = new Set([...(m?.[1] ?? "").matchAll(/^ {2}(\w+)/gm)].map((x) => x[1]));
+    const offenders: string[] = [];
+    for (const file of DOCS) {
+      // `c.` is the conventional handle for a CompressResult throughout the docs.
+      for (const call of read(file).matchAll(/\bc\.(\w+)/g)) {
+        if (!members.has(call[1])) offenders.push(`${file}: c.${call[1]}`);
+      }
+    }
+    expect(offenders, `docs call missing members:\n  ${offenders.join("\n  ")}`).toEqual([]);
+  });
+});
