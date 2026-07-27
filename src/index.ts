@@ -30,6 +30,8 @@ import {
   flattenSchema,
   normalize,
   signatureLine,
+  tsModule,
+  tsSignature,
   terseDescriptor,
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
@@ -47,7 +49,16 @@ export type { PolicyEntry, BrokenEntry, Objective } from "./policy.generated.js"
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
 const LEVELS: Level[] = [0, 1, 2, 3];
-const MAP_STYLES: MapStyle[] = ["name+required", "explicit", "signature"];
+const MAP_STYLES: MapStyle[] = [
+  "name+required",
+  "explicit",
+  "signature",
+  // EXPERIMENTAL, branch experiment/tools-as-code. Reachable only by asking for them by
+  // name — never selected by the policy table, never a default. See docs/RESULTS.md.
+  "typescript",
+  "typescript-doc",
+  "signature-doc",
+];
 
 const err = (message: string, recoverable = true): Resolution => ({
   kind: "error",
@@ -409,10 +420,15 @@ export function compress(
   // `name+required` adds the required parameter names — a few tokens per tool
   // against a full schema's ~400 — to reduce malformed arguments on models that
   // fill the generic argument bag poorly.
+  const isTs = mapStyle === "typescript" || mapStyle === "typescript-doc";
   const renderLine = (code: string, t: NormalizedTool): string => {
     const req = t.schema.required ?? [];
     // Full signature: optional params included, so the model rarely needs q().
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
+    if (mapStyle === "signature-doc") {
+      const d = firstSentence(t.description ?? "").trim();
+      return d ? `${code} ${signatureLine(t)} — ${d}` : `${code} ${signatureLine(t)}`;
+    }
     if (req.length) return `${code} ${t.name} ${req.join(",")}`;
     // No required parameters. `explicit` says so, because a bare name is
     // indistinguishable from a tool whose parameters were omitted, and the model
@@ -432,6 +448,16 @@ export function compress(
    */
   const lineBody = (t: NormalizedTool): string => {
     const req = t.schema.required ?? [];
+    // The TypeScript forms render a typed signature, so that is what distinguishes one
+    // declaration from another — not the required-args list. Reporting the latter here
+    // made the diagnostic describe a map that was not the one emitted.
+    // For the doc variant the JSDoc is part of the rendered declaration, so two tools
+    // with identical signatures but different one-liners ARE distinguishable. Counting
+    // only the signature understated exactly the variant most likely to help.
+    if (mapStyle === "typescript-doc") return `${firstSentence(t.description ?? "")}|${tsSignature(t, "")}`;
+    if (isTs) return tsSignature(t, "");
+    if (mapStyle === "signature-doc")
+      return `${firstSentence(t.description ?? "")}|${signatureLine(t).slice(t.name.length)}`;
     if (mapStyle === "signature") return signatureLine(t).slice(t.name.length);
     if (req.length) return req.join(",");
     return mapStyle === "explicit" ? "()" : "";
@@ -470,15 +496,43 @@ export function compress(
       },
     },
   ];
+
+  /**
+   * Grouped by the same namespaceOf the rest of the library uses, so the module layout
+   * and the level-2 grouping cannot disagree.
+   */
+  const tsGroups = new Map<string, NormalizedTool[]>();
+  if (isTs) {
+    for (const t of tools) {
+      const list = tsGroups.get(t.ns);
+      if (list) list.push(t);
+      else tsGroups.set(t.ns, [t]);
+    }
+  }
+
   const mapLegend =
-    mapStyle === "signature"
+    mapStyle === "signature-doc"
+      ? "Each line is: code name(args) — what it does, where ? marks optional. "
+      : mapStyle === "signature"
       ? "Each line is: code name(args), where ? marks optional. "
       : mapStyle === "explicit"
         ? "Each line is: code name required-args. A line ending in () takes no required arguments and can be called with none. "
         : "Each line is: code name required-args. ";
   const invokeHint =
     "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
-  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
+  // The TypeScript form addresses the model in a notation it has priors for, so it gets
+  // its own framing: real dotted names rather than opaque codes. `resolve` already
+  // accepts a real name and any separator, so nothing downstream changes.
+  const tsPreamble =
+    `The tools available to you, as TypeScript declarations:\n\n` +
+    `\`\`\`ts\n${tsModule(tsGroups, mapStyle === "typescript-doc")}\n\`\`\`\n` +
+    `Invoke with t(f="<namespace>.<function>", a={…}), for example ` +
+    `t(f="${[...tsGroups.keys()][0] ?? "ns"}.${tsGroups.values().next().value?.[0]?.op ?? "op"}", a={…}). ` +
+    `Use q to look up a function by keyword.`;
+
+  const systemPreamble = isTs
+    ? tsPreamble
+    : `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 
   return finish(
     wire,

@@ -73,7 +73,26 @@ export type { Objective };
  * fresh round of reasoning, and measurably worse on xAI for reasons we cannot yet
  * explain.
  */
-export type MapStyle = "name+required" | "explicit" | "signature";
+export type MapStyle =
+  | "name+required"
+  | "explicit"
+  | "signature"
+  /**
+   * EXPERIMENTAL, on branch experiment/tools-as-code. The catalogue as a TypeScript
+   * `.d.ts` instead of a positional map. Untested behaviourally — do not ship on it.
+   */
+  | "typescript"
+  /** EXPERIMENTAL. As above, plus a one-line JSDoc per function. */
+  | "typescript-doc"
+  /**
+   * EXPERIMENTAL. The existing compact `signature` line plus a short descriptor.
+   *
+   * Exists because the TypeScript experiment produced a negative result that pointed
+   * here: TS notation cost ~1.8x `signature` and disambiguated no better. What closed
+   * the gap was the doc comment, not the code — so this tests the hint without paying
+   * for the notation.
+   */
+  | "signature-doc";
 
 export type CompressOptions = {
   level?: Level;
