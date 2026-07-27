@@ -1009,6 +1009,7 @@ number can be recomputed rather than trusted.
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `signaturePrefix` | `boolean` | `true` | level 1 only; see below |
 | `compiled` | `Record<string, string>` | — | **experimental**, required at level 4; see below |
+| `requireCompiled` | `boolean` | `false` | **experimental**, level 4; throw instead of falling back |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
 | `validate` | `boolean` | `true` | **leave this on** |
 | `model` | `string` | — | exact model id; picks the measured style. Omit and nothing changes |
@@ -1048,7 +1049,7 @@ Returns:
 | `cachePreamble` | `boolean` | whether the preamble should sit behind a breakpoint |
 | `resolve(name, args)` | `→ Resolution` | translate a model call back |
 | `codeFor(name)` | `→ string` | real name → level-3 code; throws below level 3 |
-| `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct`, `ambiguousMapLines`, `largestLookalikeGroup`, `uncompiledTools` |
+| `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct`, `ambiguousMapLines`, `largestLookalikeGroup`, `uncompiledTools`, `staleCompiledTools`, `orphanedCompiledEntries` |
 
 > **`savedPct` is a character saving, and runs a few points optimistic against tokens.**
 > On the real 149-tool corpus it reports **45.2%** at level 1 where `count_tokens` measures
@@ -1150,6 +1151,19 @@ npx toolgz compile --tools ./tools.json --out ./toolmap.json
 Every line is verified against your real schema before it is accepted: no renamed tool, no
 invented parameter, no dropped required parameter. Failures are retried once and then
 discarded, falling back to a bare signature line counted in `stats.uncompiledTools`.
+
+**Staleness is caught without any bookkeeping**, because the schema *is* the fingerprint:
+every compiled line is re-verified against the live tool at `compress()` time. A map
+compiled before a tool gained a parameter would otherwise show the model a signature that
+no longer exists — instead the line is dropped, listed in `stats.staleCompiledTools`, and
+replaced with a correct one. `stats.orphanedCompiledEntries` counts entries for tools that
+are gone. Set `requireCompiled: true` in CI or at startup to make a partial map throw
+rather than degrade.
+
+`compileTools` also returns `danglingReferences` — docstrings that point the model at a
+tool not in your corpus. Compiling a deliberately-wrong corpus produced *"call
+`compress_output` first if large"* for a tool that does not exist; this is what catches
+that. Advisory, not fatal.
 
 Measured on the 149-tool corpus: **12,441 tokens, 81.8% under uncompressed, zero ambiguous
 map lines**. Full write-up and the honest risks in

@@ -123,13 +123,38 @@ a tool that lacks it. `validate` caught it and the run recovered.
 3. **Compilation costs a model call per batch.** One-off, but not free, and it must be
    re-run on every registry change.
 
-## Before this can merge
+## The three blockers, closed
 
-Behaviour is no longer the open question — 180 runs say it works. What is left:
+**Staleness.** No fingerprint needed — the schema is the fingerprint. Every compiled line
+is re-verified against the live tool inside `compress()`, so a map compiled before a tool
+changed shape is caught at the point of use. The stale line is dropped, named in
+`stats.staleCompiledTools`, and replaced with a correct signature. Verified: adding a
+required parameter to a tool produces
+`article_append: dropped required parameter(s): section_title`, and the emitted line shows
+the new parameter instead of the old signature.
+`stats.orphanedCompiledEntries` counts entries for tools that no longer exist.
 
-- **A staleness check.** Re-compiling is manual, and a map that no longer matches the
-  registry is a map that lies. Needs a fingerprint of the corpus stored with the artifact.
-- **A decision on partial maps in production.** `stats.uncompiledTools` makes it visible;
-  nothing makes it *fail*.
-- **A corpus with bad descriptions**, to find out what the compiler does with them. This is
-  the risk that has never been exercised.
+**Partial maps.** `requireCompiled: true` throws and names the cause. Off by default,
+because degrading beats failing at runtime — but a half-compiled map in CI is a regression
+you want to hear about.
+
+**A corpus with bad descriptions.** Tested, and the result was better than expected. Given
+four tools with deliberately wrong prose, the compiler *flagged the contradictions* rather
+than laundering them:
+
+| description said | compiled docstring |
+|---|---|
+| `delete_user` — "Creates a new user account" | "spec says creates account + welcome email **despite name**; verify before use" |
+| `list_orders` — "Pass include_archived" | "**no include_archived param exposed despite docs**" |
+| `charge_card` — *(empty)* | inferred correctly from the name and parameters |
+| `export_report` — "Use compress_output first" | **propagated**, and `compress_output` does not exist |
+
+Three of four surfaced the problem to the reader. The fourth — a redirect to a nonexistent
+tool — is exactly what `danglingReferences` is for, and it initially **missed it**: the
+detector keyed on phrases like "use X" and "instead of X" and the model wrote "call X".
+Verb list widened, re-checked against both corpora: it now catches `compress_output` and
+still flags exactly two on the real corpus with no false positives.
+
+That is the honest limit. The compiler is good at noticing that a description contradicts
+a name or a schema, because both are in front of it. It cannot notice that a description is
+plausible and wrong.

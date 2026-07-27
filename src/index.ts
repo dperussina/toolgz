@@ -33,6 +33,7 @@ import {
   terseDescriptor,
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
+import { verifyCompiledLine } from "./compile.js";
 import { nearest } from "./runtime/similar.js";
 import { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
 import type { PolicyEntry, BrokenEntry } from "./policy.generated.js";
@@ -408,6 +409,7 @@ export function compress(
   // -------------------------------------------------------------------------
   const compiled = options.compiled ?? {};
   let uncompiled = 0;
+  const stale: string[] = [];
   // Levels 3 and 4 — minified dispatcher, with a mechanical or a compiled map
   // -------------------------------------------------------------------------
   const isCompiled = level === 4;
@@ -431,9 +433,15 @@ export function compress(
     // Full signature: optional params included, so the model rarely needs q().
     if (isCompiled) {
       const line = compiled[t.name];
-      if (line) return line;
-      // No compiled entry: emit something correct rather than omitting the tool, and make
-      // the mixture visible in stats instead of silent.
+      // Re-verify at the point of use, not just at compile time. A map compiled against
+      // an older registry would otherwise show the model parameters that no longer exist,
+      // which is worse than showing it nothing — this is how staleness is caught without
+      // any fingerprint bookkeeping, because the schema itself is the fingerprint.
+      const problem = line ? verifyCompiledLine(line, t) : null;
+      if (line && !problem) return line;
+      if (problem) stale.push(`${t.name}: ${problem}`);
+      // Emit something correct rather than omitting the tool, and make the mixture
+      // visible in stats instead of silent.
       uncompiled++;
       return `def ${t.name}(${(t.schema.required ?? []).join(",")}):"(not compiled)"`;
     }
@@ -475,7 +483,13 @@ export function compress(
   const mapDiagnostics: Partial<CompressStats> = {
     ambiguousMapLines: lookalikeSizes.reduce((sum, n) => sum + n, 0),
     largestLookalikeGroup: lookalikeSizes.length ? Math.max(...lookalikeSizes) : 1,
-    ...(isCompiled ? { uncompiledTools: uncompiled } : {}),
+    ...(isCompiled
+      ? {
+          uncompiledTools: uncompiled,
+          staleCompiledTools: stale,
+          orphanedCompiledEntries: Object.keys(compiled).filter((n) => !byName.has(n)).length,
+        }
+      : {}),
   };
   const wire = [
     {
@@ -519,6 +533,14 @@ export function compress(
     " is for and when to prefer it over a similar name:\n\n```python\n" +
     lines.join("\n") +
     '\n```\nInvoke with t(f="<function name>", a={…}). Use q to search by keyword.';
+
+  if (isCompiled && options.requireCompiled && uncompiled > 0) {
+    const detail = stale.length ? `\n  stale: ${stale.join("\n  stale: ")}` : "";
+    throw new Error(
+      `requireCompiled: ${uncompiled} of ${tools.length} tools have no usable compiled line.` +
+        ` Re-run \`npx toolgz compile\`.${detail}`,
+    );
+  }
 
   const systemPreamble = isCompiled
     ? pyPreamble

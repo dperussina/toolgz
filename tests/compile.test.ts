@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { compileTools, verifyCompiledLine, COMPILE_SYSTEM_PROMPT } from "../src/index.js";
+import { compileTools, compress, verifyCompiledLine, COMPILE_SYSTEM_PROMPT } from "../src/index.js";
 import type { Tool } from "../src/types.js";
 
 const TOOLS: Tool[] = [
@@ -162,5 +162,91 @@ describe("compileTools", () => {
       },
     });
     expect(calls).toBe(3);
+  });
+});
+
+describe("staleness, partial maps and dangling references", () => {
+  /**
+   * The three things standing between level 4 and a merge, each closed by a mechanism
+   * rather than a promise to remember.
+   */
+  const tools: Tool[] = [
+    { name: "article_append", description: "Add to end.", inputSchema: { type: "object", properties: { article_id: { type: "number" }, content: { type: "string" } }, required: ["article_id", "content"] } },
+    { name: "article_update", description: "Replace.", inputSchema: { type: "object", properties: { article_id: { type: "number" }, content: { type: "string" } }, required: ["article_id", "content"] } },
+  ];
+  const compiled = {
+    article_append: `def article_append(article_id,content):"add to end; use over article_update"`,
+    article_update: `def article_update(article_id,content):"overwrite; use article_append to add"`,
+  };
+  /** The same corpus after `article_append` gains a required parameter. */
+  const moved = (): Tool[] => {
+    const next = JSON.parse(JSON.stringify(tools));
+    next[0].inputSchema.properties.section_title = { type: "string" };
+    next[0].inputSchema.required = ["article_id", "section_title", "content"];
+    return next;
+  };
+
+  it("a fresh map reports no staleness", () => {
+    const s = compress(tools, { level: 4, compiled }).stats;
+    expect(s.staleCompiledTools).toEqual([]);
+    expect(s.uncompiledTools).toBe(0);
+    expect(s.orphanedCompiledEntries).toBe(0);
+  });
+
+  it("detects a line that no longer matches its schema, without any fingerprint", () => {
+    // The schema is the fingerprint: re-verifying at the point of use catches drift that
+    // a stored hash would only catch if someone remembered to store one.
+    const s = compress(moved(), { level: 4, compiled }).stats;
+    expect(s.staleCompiledTools).toEqual(["article_append: dropped required parameter(s): section_title"]);
+  });
+
+  it("drops the stale line rather than showing the model parameters that no longer exist", () => {
+    const c = compress(moved(), { level: 4, compiled });
+    const line = c.systemPreamble.split("\n").find((l) => l.includes("article_append"))!;
+    expect(line, "must show the new required parameter").toContain("section_title");
+    expect(line).toContain("(not compiled)");
+    expect(c.stats.uncompiledTools).toBe(1);
+  });
+
+  it("counts compiled entries for tools that no longer exist", () => {
+    const s = compress(tools, {
+      level: 4,
+      compiled: { ...compiled, deleted_tool: `def deleted_tool(a):"gone"` },
+    }).stats;
+    expect(s.orphanedCompiledEntries).toBe(1);
+  });
+
+  it("requireCompiled turns a partial map into a failure, and names the cause", () => {
+    expect(() => compress(moved(), { level: 4, compiled, requireCompiled: true }))
+      .toThrow(/1 of 2 tools have no usable compiled line/);
+    expect(() => compress(moved(), { level: 4, compiled, requireCompiled: true }))
+      .toThrow(/section_title/);
+  });
+
+  it("requireCompiled is off by default, because degrading beats failing at runtime", () => {
+    expect(() => compress(moved(), { level: 4, compiled })).not.toThrow();
+  });
+
+  it("flags a docstring that redirects to a tool not in the corpus", async () => {
+    // The leak found by compiling a deliberately-wrong corpus: a description said
+    // "use compress_output first" and the compiler faithfully carried it, to a tool that
+    // does not exist. Verification covers the contract; this covers the claim's target.
+    const withRedirect = {
+      article_append: `def article_append(article_id,content):"add to end; call compress_output first if large"`,
+      article_update: compiled.article_update,
+    };
+    const r = await compileTools(tools, {
+      complete: async ({ user }) =>
+        user.split("\n\n").map((l) => withRedirect[l.split(" — ")[0] as keyof typeof withRedirect]).filter(Boolean).join("\n"),
+    });
+    expect(r.danglingReferences).toEqual([{ name: "article_append", mentions: "compress_output" }]);
+  });
+
+  it("does not flag a redirect to a tool that does exist", async () => {
+    const r = await compileTools(tools, {
+      complete: async ({ user }) =>
+        user.split("\n\n").map((l) => compiled[l.split(" — ")[0] as keyof typeof compiled]).filter(Boolean).join("\n"),
+    });
+    expect(r.danglingReferences).toEqual([]);
   });
 });

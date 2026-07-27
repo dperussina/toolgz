@@ -119,6 +119,15 @@ export type CompressOptions = {
    * breaks.
    */
   compiled?: Record<string, string>;
+  /**
+   * Level 4 only. Throw if any tool lacks a usable compiled line, instead of falling back
+   * to a bare signature for it. Default false.
+   *
+   * Off by default because a partial map still works and degrading beats failing at
+   * runtime. Turn it on in CI or at startup, where a silently half-compiled map is a
+   * regression you want to hear about rather than a page of `stats` nobody reads.
+   */
+  requireCompiled?: boolean;
   /** Cap how many results a search/query meta-call returns. Default 8. */
   searchLimit?: number;
   /** Validate arguments against the original schema before dispatch. Default true. */
@@ -180,10 +189,22 @@ export type CompressStats = {
   /** Level 3 only. Size of the largest such group. 1 means every line is distinct. */
   largestLookalikeGroup?: number;
   /**
-   * Level 4 only. Tools with no entry in `compiled`, which fell back to a
+   * Level 4 only. Tools with no usable entry in `compiled`, which fell back to a
    * mechanically derived signature line. Non-zero means the map is a mixture.
    */
   uncompiledTools?: number;
+  /**
+   * Level 4 only. Compiled lines that no longer match the tool they describe — the
+   * parameters changed after the map was compiled.
+   *
+   * This is how staleness is caught: a map compiled against an older registry shows the
+   * model parameters that no longer exist, which is worse than showing it nothing. Stale
+   * lines are dropped and fall back to a signature line, so they also appear in
+   * `uncompiledTools`. Re-run `npx toolgz compile`.
+   */
+  staleCompiledTools?: string[];
+  /** Level 4 only. Entries in `compiled` for tools not in this corpus. Harmless, but a hint the map is out of date. */
+  orphanedCompiledEntries?: number;
 };
 
 export type CompressResult = {

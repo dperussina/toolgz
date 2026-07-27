@@ -197,7 +197,10 @@ export async function compileTools(
     const own = new Set(Object.keys(corpus.find((t) => t.name === name)?.schema.properties ?? {}));
     const hits = new Set<string>();
     for (const m of doc.matchAll(
-      /\b(?:use|using|prefer|instead of|rather than|than|before|after|see|via|twin of)\s+([a-z][a-z0-9]*(?:_[a-z0-9]+)+)/gi,
+      // Verb list widened after a miss: a deliberately-wrong corpus produced "call
+      // compress_output first if large" and the original pattern had no "call". Any word
+      // that implies *another callable* belongs here.
+      /\b(?:use|using|prefer|instead of|rather than|than|before|after|see|via|twin of|call|calling|run|invoke|chain|combine with|pair with|requires|needs)\s+([a-z][a-z0-9]*(?:_[a-z0-9]+)+)/gi,
     )) {
       const tok = m[1];
       if (tok === name || own.has(tok) || known.has(tok)) continue;
