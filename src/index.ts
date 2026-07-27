@@ -16,6 +16,7 @@
 import type {
   CompressOptions,
   CompressResult,
+  CompressStats,
   Level,
   NormalizedTool,
   Resolution,
@@ -222,6 +223,7 @@ export function compress(
     cachePreamble: boolean,
     resolve: (n: string, a: Record<string, any>) => Resolution,
     encode: (n: string, a: Record<string, any>) => { name: string; args: Record<string, any> },
+    extra: Partial<CompressStats> = {},
   ): CompressResult => {
     const compressedChars =
       countSchemaTokensApprox(wire) + systemPreamble.length;
@@ -236,7 +238,7 @@ export function compress(
     // 149. No local character-based calculation can span that range.
     //
     // The plain character ratio is the smaller and more predictable error: it runs a few
-    // points optimistic (−7.7% chars against −4.9% real tokens on a 2-tool set; 46.8%
+    // points optimistic (−7.7% chars against −4.9% real tokens on a 2-tool set; 45.2%
     // against 39.2% on 149 real tools). So it is reported as what it is, and the docs say
     // to measure with your provider's counter for anything you publish.
     return {
@@ -264,6 +266,7 @@ export function compress(
           originalChars === 0
             ? 0
             : Math.round((1 - compressedChars / originalChars) * 1000) / 10,
+        ...extra,
       },
     };
   };
@@ -418,6 +421,31 @@ export function compress(
   };
 
   const lines = [...codeToTool.entries()].map(([code, t]) => renderLine(code, t));
+
+  /**
+   * How much of the map carries nothing but a name.
+   *
+   * Derived from the same `renderLine` inputs rather than by parsing the rendered text,
+   * so the number cannot disagree with the map it describes. The "body" is the line with
+   * the code and the tool name removed — for `name+required` that is the required-args
+   * list, for `signature` the parenthesised signature.
+   */
+  const lineBody = (t: NormalizedTool): string => {
+    const req = t.schema.required ?? [];
+    if (mapStyle === "signature") return signatureLine(t).slice(t.name.length);
+    if (req.length) return req.join(",");
+    return mapStyle === "explicit" ? "()" : "";
+  };
+  const bodyCounts = new Map<string, number>();
+  for (const t of codeToTool.values()) {
+    const b = lineBody(t);
+    bodyCounts.set(b, (bodyCounts.get(b) ?? 0) + 1);
+  }
+  const lookalikeSizes = [...bodyCounts.values()].filter((n) => n > 1);
+  const mapDiagnostics: Partial<CompressStats> = {
+    ambiguousMapLines: lookalikeSizes.reduce((sum, n) => sum + n, 0),
+    largestLookalikeGroup: lookalikeSizes.length ? Math.max(...lookalikeSizes) : 1,
+  };
   const wire = [
     {
       name: "t",
@@ -535,6 +563,7 @@ export function compress(
       return finalize(t, callArgs);
     },
     (name, args) => ({ name: "t", args: { f: toolToCode.get(name)!, a: args } }),
+    mapDiagnostics,
   );
 }
 

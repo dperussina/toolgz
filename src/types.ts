@@ -147,6 +147,23 @@ export type CompressStats = {
   originalChars: number;
   compressedChars: number;
   savedPct: number;
+  /**
+   * Level 3 only. How many `<toolmap>` lines are indistinguishable from at least one
+   * other line once you ignore the code and the tool name — i.e. how much of the map
+   * carries no information beyond a name.
+   *
+   * Exists because a team measured a real regression from this and could only find it
+   * by spending $25 on a live sweep. Their 60-tool registry rendered 44 of 60 lines into
+   * lookalike groups, the largest with 24 members (`manage_* operation`), and the model
+   * keyword-matched "table" in the prompt to `manage_table`. Switching to
+   * `mapStyle: "signature"` took it to 2 of 60 and the regression went away.
+   *
+   * A high number is not automatically a problem — it is a prompt for you to check
+   * whether your tool names alone can carry the choice. Absent below level 3.
+   */
+  ambiguousMapLines?: number;
+  /** Level 3 only. Size of the largest such group. 1 means every line is distinct. */
+  largestLookalikeGroup?: number;
 };
 
 export type CompressResult = {

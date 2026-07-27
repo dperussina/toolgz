@@ -16,7 +16,8 @@ export function validateArgs(
 ): string | null {
   const schema = tool.schema ?? {};
   const props: Record<string, any> = schema.properties ?? {};
-  const required: string[] = schema.required ?? [];
+  // Conditionally-required keys count as required once their condition holds.
+  const required: string[] = [...(schema.required ?? []), ...conditionallyRequired(schema, args)];
   const known = Object.keys(props);
   const supplied = Object.keys(args);
 
@@ -107,4 +108,60 @@ function checkType(
       break;
   }
   return null;
+}
+
+/**
+ * The `if/then` subset that expresses "this operation needs a confirmation flag".
+ *
+ * Reported by a team whose 60-tool registry has 16 confirmation-gated operations. Their
+ * contract lived in description prose, which every level above 0 strips, so the model
+ * stopped sending the flag. The durable place for it is the schema — except a compound
+ * tool cannot put `_confirmed` in `required[]` without breaking every benign call:
+ * `manage_dashboard{operation:"list"}` would start erroring.
+ *
+ * So this supports exactly the shape that solves it, and no more:
+ *
+ *   allOf: [{ if: { properties: { operation: { const: "delete" } } },
+ *             then: { required: ["_confirmed"] } }]
+ *
+ * `const` and `enum` are both honoured on the condition, `if`/`then` may sit at the top
+ * level or inside `allOf`, and multiple branches accumulate. Anything else — `else`,
+ * nested conditionals, `not`, `dependentRequired` — is deliberately ignored rather than
+ * half-implemented, because a validator that silently mis-handles a contract is worse
+ * than one that visibly does not implement it. Documented in the README as such.
+ *
+ * Note this enforces the contract; it does not make it *visible* to the model. At level 3
+ * nothing schema-encoded reaches the model at all, so the policy still belongs in the
+ * system prompt. This is the backstop, not the mechanism.
+ */
+function conditionallyRequired(schema: any, args: Record<string, any>): string[] {
+  const branches: any[] = [];
+  if (schema?.if) branches.push(schema);
+  if (Array.isArray(schema?.allOf)) {
+    for (const entry of schema.allOf) if (entry?.if) branches.push(entry);
+  }
+
+  const out: string[] = [];
+  for (const branch of branches) {
+    if (!matches(branch.if, args)) continue;
+    const req = branch.then?.required;
+    if (Array.isArray(req)) out.push(...req.filter((k) => typeof k === "string"));
+  }
+  return out;
+}
+
+/** True when every property the condition names agrees with the supplied arguments. */
+function matches(cond: any, args: Record<string, any>): boolean {
+  const props = cond?.properties;
+  if (!props || typeof props !== "object") return false;
+  const entries = Object.entries(props as Record<string, any>);
+  if (!entries.length) return false;
+  return entries.every(([key, spec]) => {
+    const value = args[key];
+    if (value === undefined) return false;
+    if (spec && "const" in spec) return value === spec.const;
+    if (spec && Array.isArray(spec.enum)) return spec.enum.includes(value);
+    // A condition we cannot evaluate must not be treated as satisfied.
+    return false;
+  });
 }

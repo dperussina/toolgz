@@ -97,6 +97,48 @@ so 40 real MCP tools cross it while 72 one-parameter tools do not.
 Level 2 is dominated by level 3 on accuracy (six times the malformed arguments) and is
 never recommended. It stays in the API for callers who need real operation names.
 
+## Before shipping level 3, check the map is not all lookalikes
+
+```ts
+const c = compress(myTools, { level: 3 });
+c.stats.ambiguousMapLines      // lines sharing a body with another line
+c.stats.largestLookalikeGroup  // size of the biggest such group; 1 is ideal
+```
+
+At level 3 the map is all the model has. If many tools render to the same line — common
+when tools are named `manage_x` and all take one `operation` argument — the name becomes
+the only signal and the model keyword-matches. Measured on a real 60-tool registry:
+`name+required` gave 44/60 ambiguous lines and the model picked the wrong tool 3/3;
+`mapStyle: "signature"` gave 2/60 and 0 wrong picks, for 4,242 more tokens.
+
+**A high number means switch to `mapStyle: "signature"`.** Do not ignore it.
+
+## Two hard facts about level 3
+
+1. **Nothing schema-encoded reaches the model.** The wire is `t(f, a)` and `q(c, s)` with
+   generic argument objects; no parameter name from the registry appears in them. The
+   schema is used only for toolgz's validation, and the model sees it only via a `q()`
+   expansion. Contracts in `required[]`, in conditionals, or in parameter descriptions are
+   invisible. **Behavioural policy must go in the system prompt.**
+2. **Audit and logging must read `resolve()` output.** Real tool names never hit the wire.
+   A raw-request log shows `t`, `q` and opaque codes. `resolve()` returns the real name and
+   byte-identical args — log from there.
+
+## Conditionally required parameters
+
+Supported, and enforced by `validate` at every level:
+
+```json
+"allOf": [{ "if": { "properties": { "operation": { "const": "delete" } } },
+            "then": { "required": ["_confirmed"] } }]
+```
+
+Use this instead of putting the key in `required[]` when a tool is compound — an
+unconditional `required` would reject `{operation:"list"}` too. `const` and `enum`
+conditions work, `if`/`then` may be top-level or inside `allOf`, and branches accumulate.
+**`else`, nested conditionals, `not` and `dependentRequired` are ignored, not enforced** —
+and a condition that cannot be evaluated never adds a requirement.
+
 ## Provider adapters — pick the right one
 
 ```ts

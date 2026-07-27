@@ -346,7 +346,17 @@ const { level, reason } = recommendLevel(myTools);
 *(Level 0 is a passthrough, for A/B testing inside your own app.)*
 
 **Level 1 is free** — measured: fewer tokens, zero malformed arguments, zero extra turns,
-latency no worse. **Level 2 is dominated by level 3** on every axis, including producing more
+latency no worse.
+
+> **One caveat on level 1, from an external reviewer.** Level 1 strips prose but keeps the
+> schema, so it retains enough to look authoritative and the model has no reason to read
+> further — measured at **zero `q()` lookups per task**. Level 3, forced into lookups,
+> incidentally recovers policy that lived in the prose. On their registry level 1 was
+> therefore the *worse* arm for confirmation-gated operations: 5 of 9 destructive calls
+> issued with no confirmation token against 3 of 9 at level 3. Their phrase for it is
+> **"level 1 is the dangerous middle"**, and it is a better description than anything we
+> had. If your tool descriptions carry behavioural policy, move it to the system prompt
+> before compressing at any level. **Level 2 is dominated by level 3** on every axis, including producing more
 malformed arguments; it is not a stepping stone.
 
 ### What level 3 actually looks like
@@ -1037,7 +1047,7 @@ Returns:
 | `cachePreamble` | `boolean` | whether the preamble should sit behind a breakpoint |
 | `resolve(name, args)` | `→ Resolution` | translate a model call back |
 | `codeFor(name)` | `→ string` | real name → level-3 code; throws below level 3 |
-| `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct` |
+| `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct`, `ambiguousMapLines`, `largestLookalikeGroup` |
 
 > **`savedPct` is a character saving, and runs a few points optimistic against tokens.**
 > On the real 149-tool corpus it reports **45.2%** at level 1 where `count_tokens` measures
@@ -1064,6 +1074,48 @@ Returns:
 > Anthropic-shaped and `input_schema` is one character longer; hand it `input_schema`
 > already and it reports a true 0%. Structural either way, not waste.
 | `encodeCallForTest(name, args)` | `→ {name, args}` | build the raw call a model would emit; test aid |
+
+#### Check `ambiguousMapLines` before you ship level 3
+
+At level 3 the map is the only thing the model has to choose from. If many of your tools
+render to the same line, the tool *name* becomes the sole signal — and a name is a weak
+signal when fifteen of them start with `manage_`.
+
+```ts
+const c = compress(myTools, { level: 3 });
+console.log(c.stats.ambiguousMapLines, c.stats.largestLookalikeGroup);
+```
+
+A team ran this against a live 60-tool registry where 19 tools are named `manage_*` and 15
+take a single required `operation`:
+
+| | ambiguous lines | largest group | tokens |
+|---|---:|---:|---:|
+| `name+required` | **44/60** | **24** | 1,279 |
+| `signature` | **2/60** | **2** | 5,521 |
+
+Asked to attach a note to "table tbl_ord", the model keyword-matched *table* to
+`manage_table` — 3 times out of 3 — because the map had deleted every other distinction.
+Switching to `signature` fixed it: **0 wrong picks, 0 malformed arguments**, and lookups
+per task fell from 1.00 to 0.33. The map costs 4,242 more tokens and is still **91% under
+their uncompressed baseline and ~4× smaller than level 1**.
+
+**So: a high number is a prompt to reach for `signature`, not a defect.** Zero means every
+line is distinct and `name+required` is doing its job. Absent below level 3.
+
+### Two things to know before you rely on level 3
+
+**Nothing schema-encoded reaches the model.** The wire carries `t(f, a)` and `q(c, s)` with
+generic argument objects — no parameter name from your registry appears anywhere in them.
+Your schema is used by toolgz for validation, and the model only ever sees it through a
+`q()` expansion. So a contract expressed in `required[]`, in a conditional, or in a
+parameter description is **invisible at level 3**. Behavioural policy belongs in your
+system prompt, which is the one channel that survives every level.
+
+**Your audit trail must read `resolve()` output, not the raw request.** Real tool names
+never hit the wire at level 3. A log that records what you sent the provider shows `t` and
+`q` and opaque codes; `resolve()` hands back the real name and byte-identical arguments.
+Log from there.
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
 
