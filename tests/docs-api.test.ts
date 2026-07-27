@@ -11,10 +11,12 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { compress } from "../src/index.js";
+import { compress, MAP_STYLES } from "../src/index.js";
 import type { Tool } from "../src/types.js";
 
-const VALID_STYLES = ["name+required", "explicit", "signature"];
+// Derived, not copied. A hardcoded list here went stale the moment styles were added on
+// a branch, and a guard that fails on correct docs teaches people to disable it.
+const VALID_STYLES: string[] = [...MAP_STYLES];
 // Includes specs/, because a stale `mapStyle: "grouped"` example survived there while
 // README and docs/ were clean — the guard has to cover everywhere prose lives.
 const DOCS = [

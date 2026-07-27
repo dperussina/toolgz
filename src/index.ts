@@ -49,7 +49,8 @@ export type { PolicyEntry, BrokenEntry, Objective } from "./policy.generated.js"
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
 const LEVELS: Level[] = [0, 1, 2, 3];
-const MAP_STYLES: MapStyle[] = [
+/** Exported so docs guards derive the valid set instead of keeping their own copy. */
+export const MAP_STYLES: MapStyle[] = [
   "name+required",
   "explicit",
   "signature",

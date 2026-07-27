@@ -1008,6 +1008,7 @@ number can be recomputed rather than trusted.
 | `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–3 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `signaturePrefix` | `boolean` | `true` | level 1 only; see below |
+| `compiled` | `Record<string, string>` | — | **experimental**, `mapStyle: "python"` only; see below |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
 | `validate` | `boolean` | `true` | **leave this on** |
 | `model` | `string` | — | exact model id; picks the measured style. Omit and nothing changes |
@@ -1047,7 +1048,7 @@ Returns:
 | `cachePreamble` | `boolean` | whether the preamble should sit behind a breakpoint |
 | `resolve(name, args)` | `→ Resolution` | translate a model call back |
 | `codeFor(name)` | `→ string` | real name → level-3 code; throws below level 3 |
-| `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct`, `ambiguousMapLines`, `largestLookalikeGroup` |
+| `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct`, `ambiguousMapLines`, `largestLookalikeGroup`, `uncompiledTools` |
 
 > **`savedPct` is a character saving, and runs a few points optimistic against tokens.**
 > On the real 149-tool corpus it reports **45.2%** at level 1 where `count_tokens` measures
@@ -1116,6 +1117,29 @@ system prompt, which is the one channel that survives every level.
 never hit the wire at level 3. A log that records what you sent the provider shows `t` and
 `q` and opaque codes; `resolve()` hands back the real name and byte-identical arguments.
 Log from there.
+
+#### Experimental: `mapStyle: "python"` and `compiled`
+
+> **Branch `experiment/tools-as-code` only. Not on `main`, not published, never run
+> against a model.** Documented here so the API-reference guard stays honest.
+
+A model rewrites each tool ahead of time as one line of minified Python, and the docstring
+carries what the tool is for and when to prefer it over a similar name:
+
+```python
+def append_to_article(article_id,section_title,content,append_reason,confidence):"add new section to end of existing article; safer than update_article which replaces"
+```
+
+`compress(tools, { level: 3, mapStyle: "python", compiled })`, where `compiled` maps real
+tool name to line. Compilation is a **build step** — `bench/compile-python.ts` — because
+the library has zero runtime dependencies and cannot call a model itself. Every line is
+verified against the real schema before it is accepted: no rename, no invented parameter,
+no dropped required parameter. A tool with no entry falls back to a mechanical signature
+line and is counted in `stats.uncompiledTools`.
+
+Measured on the 149-tool corpus: **12,441 tokens, 81.8% under uncompressed, zero ambiguous
+map lines** — the cheapest style that carries semantics. Full write-up and the honest risks
+in [docs/EXPERIMENT-tools-as-code.md](docs/EXPERIMENT-tools-as-code.md).
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
 
