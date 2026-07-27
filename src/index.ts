@@ -30,8 +30,6 @@ import {
   flattenSchema,
   normalize,
   signatureLine,
-  tsModule,
-  tsSignature,
   terseDescriptor,
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
@@ -48,18 +46,12 @@ export { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
 export type { PolicyEntry, BrokenEntry, Objective } from "./policy.generated.js";
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
-const LEVELS: Level[] = [0, 1, 2, 3];
+const LEVELS: Level[] = [0, 1, 2, 3, 4];
 /** Exported so docs guards derive the valid set instead of keeping their own copy. */
 export const MAP_STYLES: MapStyle[] = [
   "name+required",
   "explicit",
   "signature",
-  // EXPERIMENTAL, branch experiment/tools-as-code. Reachable only by asking for them by
-  // name — never selected by the policy table, never a default. See docs/RESULTS.md.
-  "typescript",
-  "typescript-doc",
-  "signature-doc",
-  "python",
 ];
 
 const err = (message: string, recoverable = true): Resolution => ({
@@ -136,7 +128,7 @@ export function compress(
 ): CompressResult {
   const level = (options.level ?? 1) as Level;
   if (!LEVELS.includes(level)) {
-    throw new Error(`unsupported level: ${level} (expected 0, 1, 2 or 3)`);
+    throw new Error(`unsupported level: ${level} (expected 0, 1, 2, 3 or 4)`);
   }
 
   // Default is "name+required", chosen on measurement rather than taste.
@@ -178,7 +170,9 @@ export function compress(
   // -- level 3 code assignment ----------------------------------------------
   const codeToTool = new Map<string, NormalizedTool>();
   const toolToCode = new Map<string, string>();
-  if (level === 3) {
+  // Level 4 is level 3 with a compiled map, so it shares code assignment, the resolver
+  // and the name index. Only the rendering of the map differs.
+  if (level >= 3) {
 
     let ni = 0;
     for (const [, list] of groups) {
@@ -220,7 +214,7 @@ export function compress(
     if (seen === undefined) normIndex.set(k, t);          // first claim
     else if (seen && seen.name !== t.name) normIndex.set(k, null); // ambiguous
   };
-  if (level === 3) {
+  if (level >= 3) {
     for (const t of tools) registerNorm(t.name, t);
     for (const [code, t] of codeToTool) registerNorm(code, t);
   }
@@ -412,8 +406,18 @@ export function compress(
   }
 
   // -------------------------------------------------------------------------
-  // Level 3 — minified dispatcher + opaque codes
+  const compiled = options.compiled ?? {};
+  let uncompiled = 0;
+  // Levels 3 and 4 — minified dispatcher, with a mechanical or a compiled map
   // -------------------------------------------------------------------------
+  const isCompiled = level === 4;
+  if (isCompiled && !Object.keys(compiled).length) {
+    throw new Error(
+      "level 4 needs a compiled map. Generate one with `npx toolgz compile` or " +
+        "compileTools(tools, { complete }), then pass it as { compiled }. " +
+        "Every other level is derived from your schemas and needs nothing.",
+    );
+  }
   // Map line rendering. Default is `code name`: a prose descriptor reintroduces
   // per-tool text into the cached prefix and, measured at 60 tools, made level 3
   // LARGER than level 2. The name is the densest useful selector, and full
@@ -422,25 +426,18 @@ export function compress(
   // `name+required` adds the required parameter names — a few tokens per tool
   // against a full schema's ~400 — to reduce malformed arguments on models that
   // fill the generic argument bag poorly.
-  const isTs = mapStyle === "typescript" || mapStyle === "typescript-doc";
-  const compiled = options.compiled ?? {};
-  let uncompiled = 0;
   const renderLine = (code: string, t: NormalizedTool): string => {
     const req = t.schema.required ?? [];
     // Full signature: optional params included, so the model rarely needs q().
-    if (mapStyle === "python") {
+    if (isCompiled) {
       const line = compiled[t.name];
       if (line) return line;
-      // No compiled entry: fall back to something correct rather than omitting the tool,
-      // and make the mixture visible in stats instead of silent.
+      // No compiled entry: emit something correct rather than omitting the tool, and make
+      // the mixture visible in stats instead of silent.
       uncompiled++;
-      return `def ${t.name}(${(t.schema.required ?? []).join(",")}):"" `.trimEnd();
+      return `def ${t.name}(${(t.schema.required ?? []).join(",")}):"(not compiled)"`;
     }
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
-    if (mapStyle === "signature-doc") {
-      const d = firstSentence(t.description ?? "").trim();
-      return d ? `${code} ${signatureLine(t)} — ${d}` : `${code} ${signatureLine(t)}`;
-    }
     if (req.length) return `${code} ${t.name} ${req.join(",")}`;
     // No required parameters. `explicit` says so, because a bare name is
     // indistinguishable from a tool whose parameters were omitted, and the model
@@ -460,22 +457,11 @@ export function compress(
    */
   const lineBody = (t: NormalizedTool): string => {
     const req = t.schema.required ?? [];
-    // The TypeScript forms render a typed signature, so that is what distinguishes one
-    // declaration from another — not the required-args list. Reporting the latter here
-    // made the diagnostic describe a map that was not the one emitted.
-    // For the doc variant the JSDoc is part of the rendered declaration, so two tools
-    // with identical signatures but different one-liners ARE distinguishable. Counting
-    // only the signature understated exactly the variant most likely to help.
-    if (mapStyle === "typescript-doc") return `${firstSentence(t.description ?? "")}|${tsSignature(t, "")}`;
-    if (mapStyle === "python") {
+    if (isCompiled) {
+      // Params plus docstring — the whole discriminator at level 4.
       const line = compiled[t.name] ?? "";
-      // Everything after the tool name: params plus the docstring, which is the whole
-      // discriminator for this style.
       return line.slice(line.indexOf("(") + 1);
     }
-    if (isTs) return tsSignature(t, "");
-    if (mapStyle === "signature-doc")
-      return `${firstSentence(t.description ?? "")}|${signatureLine(t).slice(t.name.length)}`;
     if (mapStyle === "signature") return signatureLine(t).slice(t.name.length);
     if (req.length) return req.join(",");
     return mapStyle === "explicit" ? "()" : "";
@@ -489,7 +475,7 @@ export function compress(
   const mapDiagnostics: Partial<CompressStats> = {
     ambiguousMapLines: lookalikeSizes.reduce((sum, n) => sum + n, 0),
     largestLookalikeGroup: lookalikeSizes.length ? Math.max(...lookalikeSizes) : 1,
-    ...(mapStyle === "python" ? { uncompiledTools: uncompiled } : {}),
+    ...(isCompiled ? { uncompiledTools: uncompiled } : {}),
   };
   const wire = [
     {
@@ -516,49 +502,22 @@ export function compress(
     },
   ];
 
-  /**
-   * Grouped by the same namespaceOf the rest of the library uses, so the module layout
-   * and the level-2 grouping cannot disagree.
-   */
-  const tsGroups = new Map<string, NormalizedTool[]>();
-  if (isTs) {
-    for (const t of tools) {
-      const list = tsGroups.get(t.ns);
-      if (list) list.push(t);
-      else tsGroups.set(t.ns, [t]);
-    }
-  }
-
   const mapLegend =
-    mapStyle === "signature-doc"
-      ? "Each line is: code name(args) — what it does, where ? marks optional. "
-      : mapStyle === "signature"
+    mapStyle === "signature"
       ? "Each line is: code name(args), where ? marks optional. "
       : mapStyle === "explicit"
         ? "Each line is: code name required-args. A line ending in () takes no required arguments and can be called with none. "
         : "Each line is: code name required-args. ";
   const invokeHint =
     "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
-  // The TypeScript form addresses the model in a notation it has priors for, so it gets
-  // its own framing: real dotted names rather than opaque codes. `resolve` already
-  // accepts a real name and any separator, so nothing downstream changes.
-  const tsPreamble =
-    `The tools available to you, as TypeScript declarations:\n\n` +
-    `\`\`\`ts\n${tsModule(tsGroups, mapStyle === "typescript-doc")}\n\`\`\`\n` +
-    `Invoke with t(f="<namespace>.<function>", a={…}), for example ` +
-    `t(f="${[...tsGroups.keys()][0] ?? "ns"}.${tsGroups.values().next().value?.[0]?.op ?? "op"}", a={…}). ` +
-    `Use q to look up a function by keyword.`;
-
   const pyPreamble =
     "The tools available to you, as Python declarations. The docstring says what each one" +
     " is for and when to prefer it over a similar name:\n\n```python\n" +
     lines.join("\n") +
     '\n```\nInvoke with t(f="<function name>", a={…}). Use q to search by keyword.';
 
-  const systemPreamble = mapStyle === "python"
+  const systemPreamble = isCompiled
     ? pyPreamble
-    : isTs
-    ? tsPreamble
     : `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 
   return finish(
@@ -647,6 +606,9 @@ export function compress(
     mapDiagnostics,
   );
 }
+
+export { compileTools, verifyCompiledLine, describeForCompile, COMPILE_SYSTEM_PROMPT } from "./compile.js";
+export type { Completion, CompileOptions, CompileResult } from "./compile.js";
 
 export { recommendLevel } from "./recommend.js";
 export type { Recommendation } from "./recommend.js";

@@ -181,3 +181,66 @@ describe("conditionally required parameters are enforced", () => {
     expect(c.resolve("t", { f: code, a: { op: "stop" } }).kind, "else is ignored").toBe("call");
   });
 });
+
+describe("level 4 — a map a model compiled for you", () => {
+  /**
+   * Level 4 is level 3 with the mechanical map replaced by one a model wrote, so the map
+   * can carry what a tool is FOR. Everything else — code assignment, the resolver, the
+   * name index, validation — is shared.
+   */
+  const tools: Tool[] = [
+    { name: "article_update", description: "Replace the whole body.", inputSchema: { type: "object", properties: { article_id: { type: "number" }, content: { type: "string" } }, required: ["article_id", "content"] } },
+    { name: "article_append", description: "Add to the end.", inputSchema: { type: "object", properties: { article_id: { type: "number" }, content: { type: "string" } }, required: ["article_id", "content"] } },
+  ];
+  const compiled = {
+    article_update: `def article_update(article_id,content):"overwrite whole body, old text lost; use article_append to add"`,
+    article_append: `def article_append(article_id,content):"add to end, keeping existing text; use over article_update"`,
+  };
+
+  it("refuses to run without a compiled map, and says how to get one", () => {
+    // The alternative is a silently empty map, which is the worst possible failure.
+    expect(() => compress(tools, { level: 4 })).toThrow(/needs a compiled map/);
+    expect(() => compress(tools, { level: 4 })).toThrow(/npx toolgz compile/);
+  });
+
+  it("puts the compiled lines in the system prompt and two tools on the wire", () => {
+    const c = compress(tools, { level: 4, compiled });
+    expect(c.stats.wireToolCount).toBe(2);
+    expect(c.systemPreamble).toContain("use article_append to add");
+    expect(c.systemPreamble).toContain("```python");
+  });
+
+  it("disambiguates a pair that level 3 renders identically", () => {
+    // Both tools take exactly the same required arguments, so name+required emits two
+    // lines distinguishable only by name. This is the failure level 4 exists for.
+    expect(compress(tools, { level: 3 }).stats.ambiguousMapLines).toBe(2);
+    expect(compress(tools, { level: 4, compiled }).stats.ambiguousMapLines).toBe(0);
+  });
+
+  it("resolves a call made by real function name", () => {
+    const c = compress(tools, { level: 4, compiled });
+    const r = c.resolve("t", { f: "article_append", a: { article_id: 1, content: "x" } });
+    expect(r.kind).toBe("call");
+    if (r.kind === "call") expect(r.name).toBe("article_append");
+  });
+
+  it("still validates arguments against the original schema", () => {
+    const c = compress(tools, { level: 4, compiled });
+    const r = c.resolve("t", { f: "article_append", a: { article_id: 1 } });
+    expect(r.kind).toBe("error");
+    if (r.kind === "error") expect(r.message).toContain("content");
+  });
+
+  it("degrades rather than breaks when the map is partial", () => {
+    const partial = { article_update: compiled.article_update };
+    const c = compress(tools, { level: 4, compiled: partial });
+    expect(c.stats.uncompiledTools, "the gap must be visible, not silent").toBe(1);
+    // The uncompiled tool is still callable — it just has no written hint.
+    expect(c.resolve("t", { f: "article_append", a: { article_id: 1, content: "x" } }).kind).toBe("call");
+  });
+
+  it("reports uncompiledTools only at level 4", () => {
+    expect(compress(tools, { level: 3 }).stats.uncompiledTools).toBeUndefined();
+    expect(compress(tools, { level: 4, compiled }).stats.uncompiledTools).toBe(0);
+  });
+});

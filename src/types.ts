@@ -36,8 +36,14 @@ export type NormalizedTool = {
  *  1  signature          — flatten JSON Schema, keep native tools + real names
  *  2  namespace          — collapse related ops into one tool per namespace
  *  3  minified           — single dispatcher + opaque codes
+ *  4  compiled           — single dispatcher + a map a model wrote for you
+ *
+ * Level 4 is level 3 with the map replaced by minified Python that a model compiled
+ * from your corpus ahead of time, so the map carries what each tool is FOR. It needs a
+ * `compiled` artifact — see `compileTools()` or `npx toolgz compile`. Every other level
+ * is derived mechanically from your schemas and needs nothing.
  */
-export type Level = 0 | 1 | 2 | 3;
+export type Level = 0 | 1 | 2 | 3 | 4;
 
 // Type-only, so the cycle with policy.generated.ts (which imports MapStyle from
 // here) is erased at compile time.
@@ -73,36 +79,7 @@ export type { Objective };
  * fresh round of reasoning, and measurably worse on xAI for reasons we cannot yet
  * explain.
  */
-export type MapStyle =
-  | "name+required"
-  | "explicit"
-  | "signature"
-  /**
-   * EXPERIMENTAL, on branch experiment/tools-as-code. The catalogue as a TypeScript
-   * `.d.ts` instead of a positional map. Untested behaviourally — do not ship on it.
-   */
-  | "typescript"
-  /** EXPERIMENTAL. As above, plus a one-line JSDoc per function. */
-  | "typescript-doc"
-  /**
-   * EXPERIMENTAL. The existing compact `signature` line plus a short descriptor.
-   *
-   * Exists because the TypeScript experiment produced a negative result that pointed
-   * here: TS notation cost ~1.8x `signature` and disambiguated no better. What closed
-   * the gap was the doc comment, not the code — so this tests the hint without paying
-   * for the notation.
-   */
-  | "signature-doc"
-  /**
-   * EXPERIMENTAL. The corpus as minified Python, compiled ahead of time by a model.
-   *
-   * Unlike every other style this one is not derived from the schema — a model rewrites
-   * each tool as `def name(params):"what it does and when to reach for it"`, which is
-   * how semantics survive a level-3 map at all. Requires `compiled`; see
-   * bench/compile-python.ts, which verifies every emitted parameter against the real
-   * schema before accepting a line.
-   */
-  | "python";
+export type MapStyle = "name+required" | "explicit" | "signature";
 
 export type CompressOptions = {
   level?: Level;
@@ -134,7 +111,7 @@ export type CompressOptions = {
    */
   signaturePrefix?: boolean;
   /**
-   * Pre-compiled map lines, keyed by real tool name. Only read by `mapStyle: "python"`.
+   * Pre-compiled map lines, keyed by real tool name. Required at level 4.
    *
    * Produced offline by a model, because the library has zero runtime dependencies and
    * cannot call one itself. A tool with no entry falls back to its signature line and is
@@ -203,7 +180,7 @@ export type CompressStats = {
   /** Level 3 only. Size of the largest such group. 1 means every line is distinct. */
   largestLookalikeGroup?: number;
   /**
-   * `mapStyle: "python"` only. Tools with no entry in `compiled`, which fell back to a
+   * Level 4 only. Tools with no entry in `compiled`, which fell back to a
    * mechanically derived signature line. Non-zero means the map is a mixture.
    */
   uncompiledTools?: number;

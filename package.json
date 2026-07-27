@@ -74,5 +74,8 @@
   "homepage": "https://github.com/dperussina/toolgz#readme",
   "bugs": {
     "url": "https://github.com/dperussina/toolgz/issues"
+  },
+  "bin": {
+    "toolgz": "dist/cli/index.js"
   }
 }

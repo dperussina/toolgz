@@ -1003,12 +1003,12 @@ number can be recomputed rather than trusted.
 
 | Option | Type | Default | Notes |
 |---|---|---|---|
-| `level` | `0 \| 1 \| 2 \| 3` | `1` | see [Which level to use](#which-level-to-use) |
+| `level` | `0 \| 1 \| 2 \| 3 \| 4` | `1` | see [Which level to use](#which-level-to-use) |
 | `mapStyle` | `"name+required" \| "explicit" \| "signature"` | `"name+required"` | level 3 only |
 | `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–3 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `signaturePrefix` | `boolean` | `true` | level 1 only; see below |
-| `compiled` | `Record<string, string>` | — | **experimental**, `mapStyle: "python"` only; see below |
+| `compiled` | `Record<string, string>` | — | **experimental**, required at level 4; see below |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
 | `validate` | `boolean` | `true` | **leave this on** |
 | `model` | `string` | — | exact model id; picks the measured style. Omit and nothing changes |
@@ -1118,28 +1118,42 @@ never hit the wire at level 3. A log that records what you sent the provider sho
 `q` and opaque codes; `resolve()` hands back the real name and byte-identical arguments.
 Log from there.
 
-#### Experimental: `mapStyle: "python"` and `compiled`
+#### Experimental: level 4, tools compiled to Python
 
 > **Branch `experiment/tools-as-code` only. Not on `main`, not published, never run
 > against a model.** Documented here so the API-reference guard stays honest.
 
-A model rewrites each tool ahead of time as one line of minified Python, and the docstring
-carries what the tool is for and when to prefer it over a similar name:
+Levels 0–3 derive the map from your schema, so they can only rearrange information that is
+already there. Level 4 has a model rewrite the corpus first, so the map carries what each
+tool is *for*:
 
 ```python
-def append_to_article(article_id,section_title,content,append_reason,confidence):"add new section to end of existing article; safer than update_article which replaces"
+def append_to_article(article_id,section_title,content,append_reason,confidence):"add new end section to article, keeping existing text; prefer over update_article for additions"
 ```
 
-`compress(tools, { level: 3, mapStyle: "python", compiled })`, where `compiled` maps real
-tool name to line. Compilation is a **build step** — `bench/compile-python.ts` — because
-the library has zero runtime dependencies and cannot call a model itself. Every line is
-verified against the real schema before it is accepted: no rename, no invented parameter,
-no dropped required parameter. A tool with no entry falls back to a mechanical signature
-line and is counted in `stats.uncompiledTools`.
+**Bring your own model.** `compileTools()` takes a `complete` function; the library never
+imports an SDK and never sees a key.
+
+```ts
+const { compiled } = await compileTools(myTools, {
+  complete: async ({ system, user }) => yourClient.run(system, user),
+});
+const c = compress(myTools, { level: 4, compiled });
+```
+
+Or from the command line — it uses `fetch`, so it installs nothing either:
+
+```bash
+npx toolgz compile --tools ./tools.json --out ./toolmap.json
+```
+
+Every line is verified against your real schema before it is accepted: no renamed tool, no
+invented parameter, no dropped required parameter. Failures are retried once and then
+discarded, falling back to a bare signature line counted in `stats.uncompiledTools`.
 
 Measured on the 149-tool corpus: **12,441 tokens, 81.8% under uncompressed, zero ambiguous
-map lines** — the cheapest style that carries semantics. Full write-up and the honest risks
-in [docs/EXPERIMENT-tools-as-code.md](docs/EXPERIMENT-tools-as-code.md).
+map lines**. Full write-up and the honest risks in
+[docs/EXPERIMENT-tools-as-code.md](docs/EXPERIMENT-tools-as-code.md).
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
 
@@ -1166,6 +1180,10 @@ logging; only block size drives the level.
 | `forOpenAI(c)` → `{ tools, systemPreamble }` | `/v1/chat/completions` | nested `{type, function:{…}}` |
 | `forOpenAIResponses(c)` → `{ tools, systemPreamble }` | `/v1/responses` | **flat** `{type, name, …}` — required for tools + reasoning |
 | `forGemini(c)` → `{ tools, systemPreamble }` | `generateContent` | one `functionDeclarations` array |
+
+Also exported, all experimental and branch-only: `compileTools(tools, { complete })` →
+`{ compiled, rejected, stats }`, `verifyCompiledLine(line, tool)`, `describeForCompile(tool)`
+and `COMPILE_SYSTEM_PROMPT(maxDocChars)`.
 
 Also exported: `recommendLevel(tools)` → `{ level, reason }`; `selectMapStyle(options)`
 → `{ mapStyle, requestedMapStyle?, fallbackReason? }` (pure, so you can see a pick

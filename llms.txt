@@ -113,6 +113,34 @@ the only signal and the model keyword-matches. Measured on a real 60-tool regist
 
 **A high number means switch to `mapStyle: "signature"`.** Do not ignore it.
 
+## Level 4 — a map a model compiled for you (EXPERIMENTAL, branch only)
+
+Levels 0-3 derive the map from your schema, so they can only rearrange information that is
+already there. When tool names collide there is nothing left to rearrange. Level 4 has a
+model rewrite the corpus first:
+
+```python
+def article_append(article_id,content):"add to end, keeping existing text; use over article_update"
+```
+
+Bring your own model — the library never imports an SDK:
+
+```ts
+const { compiled } = await compileTools(myTools, {
+  complete: async ({ system, user }) => yourClient.run(system, user),
+});
+compress(myTools, { level: 4, compiled });
+```
+
+Or `npx toolgz compile --tools ./tools.json --out ./toolmap.json`.
+
+- Every compiled line is verified against the real schema — no renamed tool, no invented
+  parameter, no dropped required parameter. Failures are discarded, not shipped.
+- A tool with no compiled entry falls back to a bare signature line and is counted in
+  `stats.uncompiledTools`. Check it.
+- `compress(tools, { level: 4 })` without `compiled` throws. There is no silent empty map.
+- **Never run against a model.** No accuracy data exists. Do not ship on it.
+
 ## Two hard facts about level 3
 
 1. **Nothing schema-encoded reaches the model.** The wire is `t(f, a)` and `q(c, s)` with

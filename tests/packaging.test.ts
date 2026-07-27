@@ -81,6 +81,51 @@ describe("published package weight", () => {
   });
 });
 
+describe("the library core stays runtime-agnostic", () => {
+  /**
+   * `types: ["node"]` was added to tsconfig so src/cli could be written at all. That also
+   * makes Node globals visible to every other file, so the boundary the compiler used to
+   * enforce is now enforced here: only the CLI may touch Node.
+   *
+   * It matters because the library is meant to run in a worker, an edge function or a
+   * browser, and a stray `process.env` or `node:fs` import would break that silently —
+   * the package would still build, still test, and fail only in someone's deploy.
+   */
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(join(dir, e.name)) : join(dir, e.name).endsWith(".ts") ? [join(dir, e.name)] : [],
+    );
+
+  it("no file outside src/cli imports a node: builtin or uses a Node global", () => {
+    const offenders: string[] = [];
+    for (const file of walk("src")) {
+      if (file.includes("/cli/")) continue;
+      const src = readFileSync(file, "utf8");
+      for (const m of src.matchAll(/from\s+["'](node:[^"']+)["']/g)) offenders.push(`${file}: imports ${m[1]}`);
+      for (const g of ["process.", "__dirname", "Buffer."]) {
+        // Ignore mentions inside comments; only flag real references.
+        const stripped = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+        if (stripped.includes(g)) offenders.push(`${file}: uses ${g}`);
+      }
+    }
+    expect(offenders, `library core must not depend on Node:\n  ${offenders.join("\n  ")}`).toEqual([]);
+  });
+
+  it("the CLI is the only thing allowed to, and it does", () => {
+    // Asserted so the rule above cannot pass by the CLI quietly disappearing.
+    expect(existsSync("src/cli/compile.ts")).toBe(true);
+    expect(readFileSync("src/cli/compile.ts", "utf8")).toMatch(/from "node:fs"/);
+  });
+
+  it("compileTools reaches a model only through the caller's function", () => {
+    // The zero-dependency guarantee for the compile feature, stated as a test.
+    const src = readFileSync("src/compile.ts", "utf8");
+    expect(src).not.toMatch(/from\s+["']node:/);
+    expect(src).not.toMatch(/fetch\(/);
+    expect(src).toMatch(/complete/);
+  });
+});
+
 describe("published file list", () => {
   it("ships only build output, docs for humans and agents, and legal files", () => {
     expect(pkg.files).toEqual(["dist", "README.md", "llms.txt", "LICENSE", "NOTICE"]);
