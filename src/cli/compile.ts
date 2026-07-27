@@ -132,6 +132,9 @@ async function main() {
       `${result.stats.chars} chars (${result.stats.charsPerTool}/tool)`,
   );
   for (const r of result.rejected) console.error(`  REJECTED ${r.name}: ${r.reason}`);
+  for (const d of result.danglingReferences) {
+    console.error(`  CHECK ${d.name}: docstring points at "${d.mentions}", not in this corpus`);
+  }
   if (result.rejected.length) {
     console.error(
       `\n${result.rejected.length} tool(s) failed verification and were left out. At level 4 they` +

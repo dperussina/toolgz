@@ -5,7 +5,7 @@
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
 **Round 5** — same four providers, after hardening the resolver from observed failures
 **Round 6** — real MCP tools: 149 tools from 14 live servers, replacing the synthetic fixture
-**Total**: 3,283 runs across rounds 1–7, in 15 sweeps · 2026-07-25/26 (counted from the committed JSONL, not estimated)
+**Total**: 3,479 runs across rounds 1–8, in 19 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
 **Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze-multi.ts --sweep=<timestamp>` — the `--sweep` flag is required, because pooling runs blends library versions
 
@@ -606,6 +606,92 @@ consistent, but n=8 is n=8.
 **Open**: tier 2 on `claude-opus-5` specifically, which is the contested cell. At
 ~$0.83/run it is the expensive one to answer, and the answer decides default-flip
 versus policy-row versus option-only.
+
+## Round 8 — level 4 on its own, and two bugs only a model could find
+
+Sweeps `2026-07-27T21-22-18` (smoke, 8 runs), `2026-07-27T21-29-52` (full, 144 runs) and
+`2026-07-27T21-52-59` (xAI re-run, 36 runs). Real suite, 149 tools, **level 4 only** — the
+brief was to test level 4, not to re-litigate levels 0–3.
+
+Level 4 is level 3's dispatcher with the mechanical map replaced by minified Python that a
+model compiled from the corpus ahead of time. See
+[EXPERIMENT-tools-as-code.md](EXPERIMENT-tools-as-code.md).
+
+### Result: 144/144 tasks, 156/156 correct calls, zero hallucinated names
+
+| provider | n | block | prompt | turns | lookups | correct | halluc | malformed | tasks |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| `claude-opus-5` | 36 | 12,562 | 41,339 | 3.2 | 0.2 | 39/39 | 0 | 0 | 36/36 |
+| `gemini-3.1-pro-preview` | 36 | 9,040 | 19,776 | 2.1 | 0.0 | 39/39 | 0 | 0 | 36/36 |
+| `gpt-5.6-sol` | 36 | 7,131 | 16,186 | 2.2 | 0.1 | 39/39 | 0 | 0 | 36/36 |
+| `grok-4.5` | 36 | 8,929 | 30,137 | 3.2 | 0.8 | 39/39 | 0 | **3** | 36/36 |
+
+Lookups are near zero on three providers, which is the point of putting semantics in the
+map: the model rarely needs to ask what a tool is for.
+
+### Bug 1 — `=0` meant "optional" to me and "number" to every model
+
+The smoke run scored 8/8 tasks with **3 malformed arguments across 3 of the 4 providers**,
+all the same call:
+
+```
+compiled:   def scorecard_lf_daily(...,latest_snapshot_only=0,...)
+model sent: {"latest_snapshot_only": 1}
+rejected:   must be a boolean
+```
+
+`=0` was shorthand for "this parameter is optional". In Python a default value is a type
+declaration, so it reads as "this parameter is a number" — and three providers
+independently read it correctly and produced the same wrong call.
+
+Changed the compile prompt to `name=None` and recompiled. The identical eight calls then
+produced **zero** malformed arguments, and grok-4.5's turns fell 6 → 2. Cost: +2,171
+characters over 149 tools.
+
+**No offline measurement could have found this.** Size and ambiguity were both unchanged
+by the convention. Only a model reading the map exposed it.
+
+### Bug 2 — level 4 has no codes, but the dispatcher still asked for one
+
+Of the three malformed arguments left in the 144-run sweep, two were grok-4.5 calling
+`q(c="a2")` — inventing a map code. Level 4 identifies tools by real function name and
+emits no codes at all, but `t` and `q` still described themselves in terms of "map codes",
+so the model reasonably concluded codes existed and made one up.
+
+Made the dispatcher wording level-aware — *"Invoke a tool by its function name, exactly as
+declared in the Python block"* — and re-ran all 36 grok-4.5 runs: **malformed 3 → 1, and
+the invented-code failures stopped entirely.**
+
+### What is left, and it is not a map defect
+
+The single remaining malformed argument is grok-4.5 sending `csv_mode: true` to a tool that
+does not accept it. `csv_mode` is a real parameter on several sibling tools in this corpus,
+so the model generalised it. Validation caught it and the run recovered. That is the
+failure mode `validate` exists for, and it is not specific to level 4.
+
+### A hazard found by auditing the compiled corpus, not by running it
+
+Ten compiled docstrings name a sibling tool — the highest-value hints in the map, and the
+only claims verification cannot check. Two of them point somewhere wrong:
+
+- `profile_file` → *"before **execute_coding_task**"*, which is **not in this corpus**. The
+  source description referenced a tool from a wider registry and the compiler carried it
+  faithfully.
+- `gdrive_sheets_update_range` → *"append_rows"*, a truncated name; the real tool is
+  `gdrive_sheets_append_rows`.
+
+`compileTools` now reports `danglingReferences` and the CLI prints a `CHECK` line for each.
+It reports rather than rejects: the check only fires on redirect phrases ("use X",
+"before X", "instead of X"), because docstrings legitimately mention columns and parameters
+that look like tool names. On the real corpus it flags exactly those two, with no false
+positives.
+
+### Standing
+
+Level 4 is behaviourally sound on this corpus: **180 runs, every task completed, zero
+hallucinated tool names, one recovered malformed argument.** It is still branch-only, and
+what it has not been tested against is a corpus whose descriptions are wrong — where the
+compiler would faithfully compress an untruth into something that reads authoritatively.
 
 ## Findings
 

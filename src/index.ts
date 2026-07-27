@@ -481,7 +481,9 @@ export function compress(
     {
       name: "t",
       description:
-        "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
+        isCompiled
+          ? "Invoke a tool by its function name, exactly as declared in the Python block in the system prompt."
+          : "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
       input_schema: {
         type: "object",
         properties: {
@@ -494,7 +496,9 @@ export function compress(
     {
       name: "q",
       description:
-        "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
+        isCompiled
+          ? "Expand a function name to its full description and parameter signature (c), or search the declarations by keyword (s)."
+          : "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
       input_schema: {
         type: "object",
         properties: { c: { type: "string" }, s: { type: "string" } },
@@ -547,7 +551,12 @@ export function compress(
       if (name === "q") {
         if (args.c !== undefined) {
           const t = lookupMapKey(args.c);
-          if (!t) return err(`No map code "${args.c}". Search with q(s=…).`);
+          if (!t)
+            return err(
+              isCompiled
+                ? `No function named "${args.c}". Search with q(s=…).`
+                : `No map code "${args.c}". Search with q(s=…).`,
+            );
           return {
             kind: "meta",
             name,
@@ -583,7 +592,9 @@ export function compress(
         // A near miss is the common case, and a bare rejection costs another turn.
         const guess = nearest(String(args.f ?? ""), [...codeToTool.keys()]);
         return err(
-          `No map code "${args.f}". Search with q(s=…).` +
+          (isCompiled
+            ? `No function named "${args.f}". Search with q(s=…).`
+            : `No map code "${args.f}". Search with q(s=…).`) +
             (guess ? ` Did you mean "${guess}"? Use it exactly as written in <toolmap>.` : ""),
         );
       }

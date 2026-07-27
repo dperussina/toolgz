@@ -42,6 +42,20 @@ export type CompileResult = {
   compiled: Record<string, string>;
   /** Tools that did not survive verification, and why. Never silently dropped. */
   rejected: { name: string; reason: string }[];
+  /**
+   * Docstrings that appear to point the model at a tool that is not in this corpus.
+   *
+   * Advisory, not fatal. Found on a real run: `profile_file` compiled to
+   * "…profile of CSV/JSON before execute_coding_task", and `execute_coding_task` was not
+   * among the tools compiled — so the map would send the model after something it does
+   * not have. The source description mentioned a tool from a wider registry and the
+   * compiler carried it faithfully.
+   *
+   * Heuristic, so it reports rather than rejects: docstrings legitimately mention column
+   * names and parameters that look like tool names, and discarding a good line over a
+   * false positive costs more than it saves. Review these before shipping a map.
+   */
+  danglingReferences: { name: string; mentions: string }[];
   stats: { total: number; compiled: number; chars: number; charsPerTool: number };
 };
 
@@ -174,11 +188,30 @@ export async function compileTools(
     }
   }
 
+  // Redirect phrases only — "use X", "instead of X", "before X". A bare underscored
+  // token is far more often a column or a parameter than a tool.
+  const known = new Set(corpus.map((t) => t.name));
+  const danglingReferences: { name: string; mentions: string }[] = [];
+  for (const [name, line] of Object.entries(compiled)) {
+    const doc = line.slice(line.indexOf('):"') + 3, -1);
+    const own = new Set(Object.keys(corpus.find((t) => t.name === name)?.schema.properties ?? {}));
+    const hits = new Set<string>();
+    for (const m of doc.matchAll(
+      /\b(?:use|using|prefer|instead of|rather than|than|before|after|see|via|twin of)\s+([a-z][a-z0-9]*(?:_[a-z0-9]+)+)/gi,
+    )) {
+      const tok = m[1];
+      if (tok === name || own.has(tok) || known.has(tok)) continue;
+      hits.add(tok);
+    }
+    if (hits.size) danglingReferences.push({ name, mentions: [...hits].join(", ") });
+  }
+
   const chars = Object.values(compiled).join("\n").length;
   const count = Object.keys(compiled).length;
   return {
     compiled,
     rejected: [...reasons].map(([name, reason]) => ({ name, reason })),
+    danglingReferences,
     stats: {
       total: corpus.length,
       compiled: count,

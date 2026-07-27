@@ -1,6 +1,7 @@
 # Level 4: tools compiled to Python
 
-Branch `experiment/tools-as-code`. **Never run against a model. No accuracy data exists.**
+Branch `experiment/tools-as-code`. **Tested live: 180 runs, 4 providers, every task
+completed, zero hallucinated tool names.** See [RESULTS.md](RESULTS.md) Round 8.
 
 ## The idea
 
@@ -83,12 +84,40 @@ compiled line captured *"blob (blob_container+blob_name) XOR external_url"* — 
 mutual-exclusivity constraint **that is not in the schema at all**, so no mechanical style
 could have produced it.
 
+## Measured behaviour (Round 8, level 4 only)
+
+| provider | n | turns | lookups | correct | hallucinated | malformed | tasks |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| `claude-opus-5` | 36 | 3.2 | 0.2 | 39/39 | 0 | 0 | 36/36 |
+| `gemini-3.1-pro-preview` | 36 | 2.1 | 0.0 | 39/39 | 0 | 0 | 36/36 |
+| `gpt-5.6-sol` | 36 | 2.2 | 0.1 | 39/39 | 0 | 0 | 36/36 |
+| `grok-4.5` | 36 | 3.3 | 0.8 | 39/39 | 0 | 1 | 36/36 |
+
+Lookups are near zero on three of four providers — the map answers the question, so the
+model rarely asks. Two bugs surfaced and were fixed during this, both invisible to any
+offline metric:
+
+1. **Optional parameters written `=0`** read as a type declaration, not as "optional".
+   Three providers independently sent `1` for a boolean. `=None` fixed it; malformed went
+   3 → 0 on the same eight calls.
+2. **The dispatcher still spoke of "map codes"** at a level that has none, so grok-4.5
+   invented one — `q(c="a2")`, twice. Level-aware wording fixed it; grok's malformed count
+   went 3 → 1 and the invented-code failures stopped.
+
+The one remaining malformed argument is a model generalising a real sibling parameter onto
+a tool that lacks it. `validate` caught it and the run recovered.
+
 ## Honest risks
 
 1. **The docstring is a model's assertion about your tools.** Verification covers the
    contract — names, parameters — and cannot check whether *"safer than update_article"*
    is true. On a corpus whose descriptions are wrong or stale, the compiler faithfully
-   compresses the wrong thing into something that reads authoritatively.
+   compresses the wrong thing into something that reads authoritatively. **This remains
+   untested**: every corpus measured so far has accurate descriptions.
+
+   Partially mitigated: `compileTools` now reports `danglingReferences` — docstrings that
+   redirect the model to a tool not present in the corpus. On the real corpus it caught two,
+   including `profile_file` pointing at `execute_coding_task`, which does not exist here.
 2. **A compiled map goes stale.** Re-running is manual today; a stale map is a map that
    lies. It needs a freshness check keyed on the corpus before this ships.
 3. **Compilation costs a model call per batch.** One-off, but not free, and it must be
@@ -96,8 +125,11 @@ could have produced it.
 
 ## Before this can merge
 
-- A tier-0 sweep: level 3 `signature` against level 4, 2 scenarios × 1 rep × 4 providers,
-  about 24 runs. Level 4 costs ~1.4× `signature` in tokens, so the question is whether the
-  written hints convert into correct picks.
-- A staleness check.
-- A decision on what happens when `compiled` is partial in production.
+Behaviour is no longer the open question — 180 runs say it works. What is left:
+
+- **A staleness check.** Re-compiling is manual, and a map that no longer matches the
+  registry is a map that lies. Needs a fingerprint of the corpus stored with the artifact.
+- **A decision on partial maps in production.** `stats.uncompiledTools` makes it visible;
+  nothing makes it *fail*.
+- **A corpus with bad descriptions**, to find out what the compiler does with them. This is
+  the risk that has never been exercised.
