@@ -10,6 +10,7 @@
  */
 import { writeFileSync, readFileSync } from "node:fs";
 import { compress } from "../src/index.js";
+import { REAL_TOOLS } from "./fixtures/real.js";
 import type { Tool } from "../src/types.js";
 
 type Theme = {
@@ -30,9 +31,20 @@ const MONO = `ui-monospace,SFMono-Regular,Menlo,monospace`;
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // ── real figures, computed not typed ────────────────────────────────────────
-const REAL: Tool[] = JSON.parse(
-  readFileSync(new URL("./fixtures/real-mcp-tools.json", import.meta.url), "utf8"),
-).map((t: any) => ({ name: t.name, description: t.description, inputSchema: t.input_schema }));
+/**
+ * One loader, then stripped to the shape an MCP client actually hands you.
+ *
+ * This file used to re-read the JSON with its own mapping, which is how it came to
+ * report 45.2% while the README said 46.8% — the same corpus measured two ways. The
+ * difference is that `REAL_TOOLS` carries bench-only `ns`/`op` fields for grouping,
+ * worth 4,993 characters of baseline that no real `tools/list` ever returns. Counting
+ * them inflates `savedPct`, so they come off before anything is measured.
+ */
+const REAL: Tool[] = (REAL_TOOLS as any[]).map((t) => ({
+  name: t.name,
+  description: t.description,
+  input_schema: t.input_schema,
+}));
 
 const stat = (level: 0 | 1 | 3) => compress(REAL, { level }).stats;
 const S0 = stat(0), S1 = stat(1), S3 = stat(3);

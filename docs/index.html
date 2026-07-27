@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>toolgz — reclaim the context window your tool definitions are eating</title>
+<meta name="description" content="Your agent spends 30–70k tokens of context on tool definitions before the user types a word. toolgz gets up to ~85% of it back. TypeScript, zero runtime dependencies, measured on four frontier models.">
+<link rel="canonical" href="https://dperussina.github.io/toolgz/">
+<meta property="og:title" content="toolgz — stop paying context rent on tool definitions">
+<meta property="og:description" content="149 tools in. Two tools on the wire. 95.6% of the tool block reclaimed, measured on four frontier models.">
+<meta property="og:image" content="https://dperussina.github.io/toolgz/img/level3-card-light.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root{
+    --surface:#fcfcfb; --raised:#f4f3ee; --sunken:#ecebe4;
+    --ink:#0b0b0b; --ink2:#52514e; --muted:#898781; --rule:#dedcd3;
+    --accent:#2a78d6; --good:#006300; --caution:#8a5a00; --code:#2f2e2b;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --surface:#141413; --raised:#1f1f1e; --sunken:#292928;
+      --ink:#fff; --ink2:#c3c2b7; --muted:#8a8983; --rule:#333331;
+      --accent:#5ea1f0; --good:#0ca30c; --caution:#bd8010; --code:#d8d6cf;
+    }
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--surface);color:var(--ink);font:16px/1.6 var(--sans);
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding-left:24px;padding-right:24px}
+  a{color:var(--accent)}
+  h1,h2,h3{line-height:1.15;margin:0}
+  h2{font-size:clamp(24px,3.4vw,34px);font-weight:700;letter-spacing:-.4px}
+  h3{font-size:19px;font-weight:650}
+  p{margin:14px 0}
+  .eyebrow{font-size:12.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--accent)}
+  .lead{font-size:clamp(17px,2vw,20px);color:var(--ink2);max-width:64ch}
+  .muted{color:var(--muted)}
+  section{padding:64px 0;border-top:1px solid var(--rule)}
+  section:first-of-type{border-top:0}
+
+  /* hero */
+  header{padding:72px 0 8px}
+  h1{font-size:clamp(34px,6vw,60px);font-weight:800;letter-spacing:-1.6px;max-width:22ch}
+  .hero-sub{margin-top:20px}
+  .cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:32px 0 8px}
+  .install{display:flex;align-items:center;gap:12px;background:var(--sunken);
+    border:1px solid var(--rule);border-radius:10px;padding:12px 14px;font:14px/1 var(--mono)}
+  .install button{font:600 12px var(--sans);color:var(--ink2);background:transparent;
+    border:1px solid var(--rule);border-radius:6px;padding:5px 9px;cursor:pointer}
+  .install button:hover{color:var(--ink);border-color:var(--muted)}
+  .btn{display:inline-block;text-decoration:none;font-weight:650;font-size:14.5px;
+    padding:12px 18px;border-radius:10px;border:1px solid var(--rule);color:var(--ink)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .facts{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:26px;font-size:13.5px;color:var(--muted)}
+  .facts b{color:var(--ink);font-weight:650}
+
+  figure{margin:0}
+  figure img{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px}
+  figcaption{font-size:13px;color:var(--muted);margin-top:10px}
+  picture{display:block}
+
+  /* stats */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin-top:28px}
+  .stat{background:var(--raised);border-radius:12px;padding:20px}
+  .stat .n{font-size:clamp(28px,4vw,38px);font-weight:800;letter-spacing:-1px;color:var(--good)}
+  .stat .n.plain{color:var(--ink)}
+  .stat .l{font-size:13px;color:var(--ink2);margin-top:4px}
+
+  /* code */
+  pre{background:var(--raised);border:1px solid var(--rule);border-radius:12px;
+    padding:18px 20px;overflow-x:auto;margin:20px 0}
+  code{font-family:var(--mono);font-size:13.5px}
+  pre code{color:var(--code);line-height:1.7}
+  .cm{color:var(--muted)}
+  .kw{color:var(--accent)}
+  p code,li code,td code{background:var(--sunken);padding:2px 6px;border-radius:5px;font-size:13px}
+
+  /* tables */
+  .scroll{overflow-x:auto;margin:22px 0}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:560px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--rule);white-space:nowrap}
+  th{font-size:12px;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);font-weight:700}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .win{color:var(--good);font-weight:700}
+
+  /* two-up */
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px;margin-top:26px}
+  /* Four cards on an auto-fit 3-up grid orphan the fourth. Pin these to 2x2. */
+  .grid2.pairs{grid-template-columns:repeat(2,1fr)}
+  @media (max-width:700px){ .grid2.pairs{grid-template-columns:1fr} }
+  .card{background:var(--raised);border-radius:12px;padding:22px}
+  .card h3{margin-bottom:8px}
+  .card p{margin:8px 0 0;font-size:14.5px;color:var(--ink2)}
+
+  ul.plain{padding-left:20px}
+  ul.plain li{margin:10px 0;color:var(--ink2)}
+  ul.plain li b{color:var(--ink)}
+
+  .note{border-left:3px solid var(--caution);background:var(--raised);
+    border-radius:0 10px 10px 0;padding:16px 20px;margin:24px 0}
+  .note p{margin:0;font-size:14.5px;color:var(--ink2)}
+
+  footer{border-top:1px solid var(--rule);padding:40px 0 64px;font-size:14px;color:var(--muted)}
+  footer a{margin-right:18px}
+  @media (max-width:620px){ section{padding:48px 0} header{padding:48px 0 0} }
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <div class="eyebrow">TypeScript · zero runtime dependencies · Apache-2.0</div>
+  <h1 class="hero-sub">Stop paying context rent on tool definitions.</h1>
+  <p class="lead">Your agent spends <b>30–70k tokens</b> of its context window describing what it
+  is allowed to do — before the user types a word. toolgz gets up to <b>~85%</b> of that back,
+  and hands your dispatcher exactly what it got before.</p>
+
+  <div class="cta">
+    <div class="install"><span>npm install toolgz</span>
+      <button onclick="navigator.clipboard.writeText('npm install toolgz');this.textContent='copied'">copy</button>
+    </div>
+    <a class="btn primary" href="https://github.com/dperussina/toolgz">GitHub</a>
+    <a class="btn" href="https://www.npmjs.com/package/toolgz">npm</a>
+  </div>
+
+  <div class="facts">
+    <span><b>420-run</b> cross-provider sweep</span>
+    <span><b>4</b> frontier models</span>
+    <span><b>60/60</b> tasks completed</span>
+    <span><b>0</b> hallucinated tool names</span>
+    <span><b>0</b> runtime dependencies</span>
+  </div>
+</header>
+
+<section class="wrap">
+  <div class="eyebrow">The transformation</div>
+  <h2>149 tools in. Two tools on the wire.</h2>
+  <figure style="margin-top:26px">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="img/level3-card-dark.svg">
+      <img src="img/level3-card-light.svg" alt="Before: 149 MCP tool definitions in full, 68,536 prompt tokens. After: two tools on the wire plus a cached toolmap in the system prompt, 3,022 prompt tokens — 95.6% reclaimed. The model calls t with a map code, resolve() returns the real tool name and arguments, and the dispatcher runs unchanged.">
+    </picture>
+    <figcaption>Every figure and artifact on this card is produced by running the library against
+    149 tools harvested from 14 live MCP servers. The round trip shown is verified at generation time.</figcaption>
+  </figure>
+</section>
+
+<section class="wrap">
+  <div class="eyebrow">The problem</div>
+  <h2>Prompt caching makes those tokens cheap. It doesn't give you the room back.</h2>
+  <p class="lead">Connect a few MCP servers. Each ships 20–50 tools. Every tool is a JSON Schema
+  with a sentence of prose per parameter, and that block renders at the front of
+  <em>every single request</em>. A realistic tool definition is ~420 tokens, and roughly 400 of
+  them are prose the model does not need in order to pick correctly.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="n plain">~460</div><div class="l">tokens per real MCP tool, measured</div></div>
+    <div class="stat"><div class="n plain">34%</div><div class="l">of a 200k window, for 149 tools, before the user speaks</div></div>
+    <div class="stat"><div class="n plain">434</div><div class="l">real tools is the hard ceiling at 200k, uncompressed</div></div>
+    <div class="stat"><div class="n">~10,000</div><div class="l">tools fit in the same window at level 3</div></div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="eyebrow">Adopting it</div>
+  <h2>Three lines in, one line back.</h2>
+  <pre><code><span class="kw">import</span> { compress, recommendLevel, forAnthropic } <span class="kw">from</span> <span class="cm">"toolgz"</span>;
+
+<span class="kw">const</span> { level } = recommendLevel(myTools);    <span class="cm">// advice: 0, 1 or 3</span>
+<span class="kw">const</span> c = compress(myTools, { level });       <span class="cm">// your existing MCP/SDK tool array</span>
+<span class="kw">const</span> { tools, system } = forAnthropic(c);    <span class="cm">// send these instead</span></code></pre>
+  <p>Then translate the model's call back before you dispatch:</p>
+  <pre><code><span class="kw">const</span> r = c.resolve(block.name, block.input);
+<span class="kw">if</span> (r.kind === <span class="cm">"call"</span>) <span class="kw">await</span> myDispatch(r.name, r.args);   <span class="cm">// real name, real args</span></code></pre>
+  <p><code>myDispatch</code> receives exactly what it received before. <b>Nothing downstream changes.</b>
+  Adapters ship for Anthropic Messages, OpenAI <code>/v1/chat/completions</code> and
+  <code>/v1/responses</code>, Google Gemini, and xAI.</p>
+</section>
+
+<section class="wrap">
+  <div class="eyebrow">How it works</div>
+  <h2>Three levels. You pick, always.</h2>
+  <figure style="margin-top:26px">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="img/metaphor-dark.svg">
+      <img src="img/metaphor-light.svg" alt="Three panels. Level 0: the full menu, 149 tools on the wire, nothing saved, the kitchen checks the order. Level 1: the same menu with prose cut, 149 tools on the wire, 45.2% smaller, the kitchen still checks the order. Level 3: a small numbered card and one waiter, 2 tools on the wire, 96.5% smaller, toolgz checks the order instead of the provider.">
+    </picture>
+    <figcaption>Character savings. <code>recommendLevel()</code> advises by block size, not tool
+    count — <code>compress(tools)</code> is level 1 whether you have 2 tools or 500.</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Level 1 — free</h3>
+      <p>Flattens each schema to a signature line and keeps native tool calling, so the
+      <b>provider still enforces your schema</b>. Measured: fewer tokens, zero malformed
+      arguments, zero extra turns, latency no worse.</p>
+    </div>
+    <div class="card">
+      <h3>Level 3 — the 85%</h3>
+      <p>One dispatcher plus one lookup tool, and a compact map cached in your system prompt.
+      Two tools on the wire however many you start with. Costs about half an extra turn.</p>
+    </div>
+  </div>
+
+  <div class="note"><p><b>The trade, stated plainly:</b> at levels 2–3 the model fills a generic
+  argument object, so the provider's sampler no longer enforces your schema. toolgz validates
+  against your <em>original</em> schema and returns a model-readable error instead — which is why
+  <code>validate</code> defaults to on. Leave it on.</p></div>
+</section>
+
+<section class="wrap">
+  <div class="eyebrow">Measured, not asserted</div>
+  <h2>Four frontier models. Reasoning at high effort.</h2>
+  <p class="lead">420 runs on the current sweep, 3,283 across all rounds. Every raw per-run record
+  is committed to the repository, so you can recompute any figure here rather than take our word
+  for it.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Provider</th><th>Model</th><th class="num">Tool block</th><th class="num">Prompt tokens</th><th class="num">Latency</th><th class="num">Tasks</th></tr></thead>
+      <tbody>
+        <tr><td>Anthropic</td><td><code>claude-opus-5</code></td><td class="num">9,242 → 1,284</td><td class="num">30,817 → 4,628 <span class="win">−85%</span></td><td class="num">15.0s → 12.1s</td><td class="num">15/15</td></tr>
+        <tr><td>xAI</td><td><code>grok-4.5</code></td><td class="num">6,421 → 775</td><td class="num">17,522 → 2,663 <span class="win">−85%</span></td><td class="num">6.1s → 4.6s</td><td class="num">15/15</td></tr>
+        <tr><td>Google</td><td><code>gemini-3.1-pro-preview</code></td><td class="num">5,264 → 732</td><td class="num">10,948 → 2,302 <span class="win">−79%</span></td><td class="num">5.6s → 5.5s</td><td class="num">15/15</td></tr>
+        <tr><td>OpenAI</td><td><code>gpt-5.6-sol</code></td><td class="num">2,752 → 573</td><td class="num">7,694 → 2,196 <span class="win">−71%</span></td><td class="num">6.8s → 5.6s</td><td class="num">15/15</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" style="font-size:14px">Level 3 at the shipped default map style. <b>60/60 tasks
+  completed, zero hallucinated tool names, zero malformed arguments</b> — and faster than
+  uncompressed on every provider. The suite is built from deliberately confusable tool clusters
+  (<code>search_issues</code> vs <code>list_issues</code>, approve-vs-merge, three products with
+  identically shaped operations side by side) where the correct choice turns on the tool name
+  compression takes away.</p>
+
+  <h3 style="margin-top:44px">The ratio does not decay with scale</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Tools</th><th class="num">Uncompressed</th><th class="num">Level 3</th><th class="num">Reclaimed</th></tr></thead>
+      <tbody>
+        <tr><td>149 <span class="muted">(the real corpus)</span></td><td class="num">68,536</td><td class="num">3,022</td><td class="num win">95.6%</td></tr>
+        <tr><td>435</td><td class="num">199,822</td><td class="num">8,690</td><td class="num win">95.7%</td></tr>
+        <tr><td>800</td><td class="num">368,826</td><td class="num">16,006</td><td class="num win">95.7%</td></tr>
+        <tr><td>1,200</td><td class="num">552,795</td><td class="num">23,880</td><td class="num win">95.7%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" style="font-size:14px">Measured with Anthropic's <code>count_tokens</code> and
+  confirmed against live API calls. Both the uncompressed block and the map grow linearly, so the
+  ratio holds from 149 tools to 1,200.</p>
+</section>
+
+<section class="wrap">
+  <div class="eyebrow">What this does not do</div>
+  <h2>The parts a landing page usually leaves out.</h2>
+  <ul class="plain">
+    <li><b>The cost saving is not the size of the token saving.</b> Measured 62–78% cheaper on
+    three providers but only 7% on OpenAI, where reasoning output dominates the bill. The claim is
+    context-window occupancy; cost follows, by a variable amount.</li>
+    <li><b>It is not magic on a small tool block.</b> Under ~10,000 tokens there is little worth
+    reclaiming, and <code>recommendLevel()</code> will tell you so — it returns <code>0</code> when
+    level 1 would make your block <em>bigger</em>.</li>
+    <li><b>It does not beat Anthropic's native tool search on tool-block size.</b> It composes with
+    it, works where there is no equivalent, and is more reliable below the frontier tier.</li>
+    <li><b>It has not been proven to improve accuracy, and we do not claim it.</b> Every provider we
+    test against has a window far larger than our corpus needs, so we could not reproduce the
+    enablement effect reported for small-context models.</li>
+    <li><b>Below the frontier tier, argument formatting degrades at level 3.</b> On Haiku 4.5, 17 of
+    30 runs produced a malformed argument — all caught by <code>validate</code> and recovered, no
+    task lost, but that is the known edge.</li>
+    <li><b>It is not lossless.</b> At levels 2–3 you give up provider-side constrained decoding.
+    toolgz replaces that guarantee with its own validation. That is a trade, not a free lunch.</li>
+  </ul>
+  <p><a href="https://github.com/dperussina/toolgz/blob/main/docs/RESULTS.md">Every benchmark round, including the ideas that were measured and
+  killed →</a></p>
+</section>
+
+<section class="wrap">
+  <div class="eyebrow">Go deeper</div>
+  <h2>Read it, run it, or check our work.</h2>
+  <div class="grid2 pairs">
+    <div class="card"><h3><a href="https://github.com/dperussina/toolgz#readme">Full documentation</a></h3>
+      <p>Provider setup, prompt caching, MCP wiring, troubleshooting and the complete API reference.</p></div>
+    <div class="card"><h3><a href="https://github.com/dperussina/toolgz/tree/main/examples">Runnable examples</a></h3>
+      <p>Five programs, all offline, every one executed by the test suite so it cannot rot.</p></div>
+    <div class="card"><h3><a href="https://github.com/dperussina/toolgz/blob/main/docs/BEFORE-AFTER.md">Before / after, generated</a></h3>
+      <p>The complete tools array and system prompt at every level, with real token counts and a
+      live encode → decode round trip.</p></div>
+    <div class="card"><h3><a href="https://github.com/dperussina/toolgz/tree/main/bench/results">Raw benchmark data</a></h3>
+      <p>Every per-run record from every sweep, committed. Recompute any figure on this page.</p></div>
+  </div>
+  <div class="note" style="border-left-color:var(--accent)"><p><b>Using an AI coding agent?</b>
+  Point it at <code>node_modules/toolgz/llms.txt</code> — prescriptive integration instructions
+  shipped inside the package, including a <code>Do not</code> list of the mistakes we have actually
+  fielded.</p></div>
+</section>
+
+<footer class="wrap">
+  <p>
+    <a href="https://github.com/dperussina/toolgz">GitHub</a>
+    <a href="https://www.npmjs.com/package/toolgz">npm</a>
+    <a href="https://github.com/dperussina/toolgz/blob/main/LICENSE">Apache-2.0</a>
+  </p>
+  <p>TypeScript · zero runtime dependencies · published with npm provenance.
+  Figures on this page come from <a href="https://github.com/dperussina/toolgz/blob/main/docs/RESULTS.md">docs/RESULTS.md</a> and the committed raw
+  benchmark records, and a test in the repository fails if this page disagrees with them.</p>
+</footer>
+
+</body>
+</html>

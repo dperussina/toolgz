@@ -50,9 +50,15 @@ const { tools, system } = forAnthropic(c);    // send these instead
 ```
 
 `compress(myTools)` with no `level` gives you **level 1** — safe, native tool calling,
-provider schema enforcement intact, and 13–39% smaller (13–32% on the synthetic benchmark, 39% on the real 149-tool corpus). The 71–85% figures below are
-**level 3**, which is what `recommendLevel` returns once a tool set is big enough to
+provider schema enforcement intact, and **39% smaller in tokens** on the real 149-tool
+corpus (`count_tokens`), or 13–32% on the synthetic benchmark. The 71–85% figures below
+are **level 3**, which is what `recommendLevel` returns once a tool set is big enough to
 amortise the dispatcher.
+
+Two units are in play throughout this document, and they are labelled wherever they
+appear: `savedPct` counts **characters** (45.2% at level 1 here), while every published
+headline figure is **tokens** from the provider's own counter (39.2%). Characters run a
+few points optimistic.
 
 Level 1 earns that by stripping prose, so it needs prose to strip: if your descriptions
 are already one short sentence, it **adds** ~15% instead and `recommendLevel` returns
@@ -92,9 +98,11 @@ Two things follow from that, and the first is uncomfortable:
   this fixture because every tool name carried a `namespace_op` prefix to factor out.
   On real MCP tools, which mostly do not, the same style was worth −1%.
 - Real catalogues are **bigger**, so these numbers understate the problem. A corpus of
-  **149 tools harvested from 14 live MCP servers** measures **68,494 prompt tokens**
+  **149 tools harvested from 14 live MCP servers** measures **~68,500 prompt tokens**
   uncompressed on `claude-opus-5` — more than twice the synthetic fixture, and about a
-  third of a 200k context window before the user types anything.
+  third of a 200k context window before the user types anything. (Two live measurements
+  exist, 42 tokens apart: 68,494 in the Round 6 sweep and 68,536 in the scaling run below.
+  Prose rounds; each table carries the exact figure for its own run.)
 
 The real corpus is committed at [`bench/fixtures/real-mcp-tools.json`](bench/fixtures/real-mcp-tools.json)
 with its own scenario suite (`--suite=real`), and it is the corpus of record for any
@@ -106,7 +114,8 @@ claim about real deployments.
 </picture>
 
 **All figures below are level 3** (`minified-plus`, the shipped default map style).
-Level 1 on the same sweep saves 13–32%; on the real 149-tool corpus it saves 39%; level 2 is dominated by level 3.
+Level 1 on the same sweep saves 13–32%; on the real 149-tool corpus it saves 39.2% in
+tokens; level 2 is dominated by level 3.
 
 | Provider | Model | Tool block | Prompt tokens | Latency | Tasks |
 |---|---|---:|---:|---:|:-:|
@@ -1023,8 +1032,13 @@ Returns:
 | `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct` |
 
 > **`savedPct` is a character saving, and runs a few points optimistic against tokens.**
-> On the real 149-tool corpus it reports 46.8% at level 1 where `count_tokens` measures
-> 39.2%, and 96.6% at level 3 against 95.6%.
+> On the real 149-tool corpus it reports **45.2%** at level 1 where `count_tokens` measures
+> **39.2%**, and **96.5%** at level 3 against **95.6%**.
+>
+> Those character figures are measured against the tool array as an MCP client hands it to
+> you — `{name, description, inputSchema}`. Our own benchmark fixture adds `ns`/`op` fields
+> for grouping, and counting those inflated the baseline by 4,993 characters, which is why
+> this note used to say 46.8%.
 >
 > We tried making it a token estimate in 0.2.7 and reverted it in 0.2.8. Providers charge a
 > fixed framing cost per tool definition that character counting cannot see: at 149 tools
@@ -1038,8 +1052,9 @@ Returns:
 > A negative value is possible and correct. Level 1 pays for a signature line and gets
 > paid by the prose it strips, so on tools whose descriptions are already terse it comes
 > out **~15% larger** — `recommendLevel` returns 0 in that case rather than recommending
-> it. Even level 0 reports **−0.6%**: `c.tools` is Anthropic-shaped, and `input_schema` is
-> one character longer than the `inputSchema` most callers pass in. Structural, not waste.
+> it. Level 0 reports **−0.6%** if you pass MCP-style `inputSchema`, because `c.tools` is
+> Anthropic-shaped and `input_schema` is one character longer; hand it `input_schema`
+> already and it reports a true 0%. Structural either way, not waste.
 | `encodeCallForTest(name, args)` | `→ {name, args}` | build the raw call a model would emit; test aid |
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`

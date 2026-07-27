@@ -558,7 +558,7 @@ Offline, removing it is strictly better on size:
 
 | Fixture | with prefix | without | Δ |
 |---|---:|---:|---:|
-| 149 real tools | 45.2% | **55.3%** | +10.1pp |
+| 149 real tools (characters) | 45.2% | **55.3%** | +10.1pp |
 | 14 real tools | 59.0% | **65.2%** | +6.2pp |
 | 50 terse tools | −14.4% | **−0.6%** | +13.8pp |
 | 100 terse tools, 8 properties | −24.3% | **−0.3%** | +24.0pp |
