@@ -330,7 +330,7 @@ saving.
 
 ### The levels in full
 
-Ask the library. It returns 0, 1 or 3 — never 2 — and explains itself:
+Ask the library. It returns 0, 1 or 3 — never 2, and never 4 — and explains itself:
 
 ```ts
 import { recommendLevel } from "toolgz";
@@ -342,6 +342,7 @@ const { level, reason } = recommendLevel(myTools);
 | **1** | one native tool each, signature-line descriptions | yes | **yes** | **default.** Small or wide-and-sparse tool sets. Zero measured downside. |
 | 2 | one compound tool per namespace | yes | no | you need readable op names on the wire. Otherwise skip. |
 | **3** | one dispatcher + one lookup tool | codes | no | **large, deep tool sets.** The 80% number above. |
+| **4** | one dispatcher + one lookup tool | real names | no | **when level 3's map would be all lookalikes.** Needs a compiled map; see below |
 
 *(Level 0 is a passthrough, for A/B testing inside your own app.)*
 
@@ -496,7 +497,7 @@ and the library's zero-runtime-dependency guarantee is not negotiable.
 
 ## Runnable examples
 
-Five files in [`examples/`](examples), all offline — no API key, no cost. Every one is
+Six files in [`examples/`](examples), all offline — no API key, no cost. Every one is
 **executed by the test suite**, so an example that stops working is a failing test rather
 than a bug report from you.
 
@@ -515,6 +516,7 @@ run.
 | [`03-mcp-servers.ts`](examples/03-mcp-servers.ts) | 149 real tools from 14 MCP servers, all four levels, and the name-collision hazard |
 | [`04-providers.ts`](examples/04-providers.ts) | the four provider envelopes side by side, plus the Gemini schema repairs |
 | [`05-per-model.ts`](examples/05-per-model.ts) | `model`/`objective` selection and reading `stats` to see what was actually used |
+| [`06-level4.ts`](examples/06-level4.ts) | a compiled Python map: what it fixes, and the three guarantees that make it safe |
 
 Two things `04-providers.ts` demonstrates rather than describes, because both have bitten
 people: `/v1/responses` needs the **flat** tool shape when you set reasoning effort, and
@@ -1119,10 +1121,11 @@ never hit the wire at level 3. A log that records what you sent the provider sho
 `q` and opaque codes; `resolve()` hands back the real name and byte-identical arguments.
 Log from there.
 
-#### Experimental: level 4, tools compiled to Python
+#### Level 4 — tools compiled to Python
 
-> **Branch `experiment/tools-as-code` only. Not on `main`, not published, never run
-> against a model.** Documented here so the API-reference guard stays honest.
+Measured over **180 live runs on four frontier models: every task completed, zero
+hallucinated tool names, one recovered malformed argument.**
+[Round 8](docs/RESULTS.md) has the numbers.
 
 Levels 0–3 derive the map from your schema, so they can only rearrange information that is
 already there. Level 4 has a model rewrite the corpus first, so the map carries what each
@@ -1171,7 +1174,13 @@ map lines**. Full write-up and the honest risks in
 
 ### `recommendLevel(tools, namespaceOf?) → Recommendation`
 
-`{ level, reason, toolCount, namespaceCount, opsPerNamespace }`. Returns 0, 1 or 3, never 2.
+`{ level, reason, toolCount, namespaceCount, opsPerNamespace }`. Returns 0, 1 or 3 — never
+2, and never 4.
+
+It does not return 4 because level 4 needs a compiled artifact you may not have, and a
+recommendation you cannot act on is not a recommendation. Instead, when it recommends 3
+**and that map would be mostly lookalike lines**, the reason says how many and points at
+`npx toolgz compile`.
 
 **`level: 0` means this library has nothing to offer your tool set.** Level 1 would
 inflate it — terse descriptions leave no prose to strip, so the signature line is pure
@@ -1281,6 +1290,15 @@ xAI is OpenAI-compatible — use `forOpenAI` with `baseURL: "https://api.x.ai/v1
   little worth reclaiming, and `recommendLevel()` will say so and keep you on level 1.
   That is usually a small number of tools, but not always — it depends on how verbose
   your schemas are, not on the count.
+- **A compiled level-4 map cannot be checked for truthfulness.** Verification covers the
+  contract — no renamed tool, no invented parameter, no dropped required parameter — and
+  `danglingReferences` catches a docstring pointing at a tool you do not have. Nothing
+  checks whether *"safer than update_article"* is actually true. Compiling a deliberately
+  wrong corpus, the model flagged three contradictions of four rather than laundering them,
+  but a description that is plausible and wrong will be compressed faithfully.
+- **Level 4 costs a model call and goes stale.** Compilation is a build step you re-run
+  when your registry changes. Staleness is detected at `compress()` time and the stale line
+  is dropped, so a stale map degrades rather than lies — but it stops helping.
 - **It does not pick a level for you.** `compress()` defaults to level 1 and stays there;
   reaching level 3 is always an explicit `{ level }`. Deliberate — level 3 trades away
   provider-side schema enforcement, and that is not a trade to make behind your back.
@@ -1297,7 +1315,7 @@ and it does not get deleted.
 ## Development
 
 ```bash
-npm test        # 283 tests, offline, no cost
+npm test        # 446 tests, offline, no cost
 npm run build   # tsc → dist/ with .d.ts
 
 npx tsx bench/harness/run-multi.ts --provider=all --reps=3 --variants   # costs money

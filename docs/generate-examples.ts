@@ -12,9 +12,19 @@
  * drift from the code that produced it.
  */
 import "dotenv/config";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { compress } from "../src/index.js";
 import type { Tool } from "../src/types.js";
+
+/**
+ * Level 4's map is compiled by a model ahead of time, so the artifact is committed
+ * rather than regenerated here — this script runs in CI and must not need a key for
+ * the parts that do not measure tokens. Refresh with:
+ *   npx toolgz compile --tools <DEMO_TOOLS as json> --out docs/demo-toolmap.json
+ */
+const COMPILED: Record<string, string> = JSON.parse(
+  readFileSync(new URL("./demo-toolmap.json", import.meta.url), "utf8"),
+);
 
 /** A small, deliberately realistic tool set — three tools, two namespaces. */
 export const DEMO_TOOLS: Tool[] = [
@@ -198,10 +208,21 @@ async function main() {
         "dispatch and `q` to look up. This is the level that also modifies the " +
         "system prompt — the map goes there so it sits behind a cache breakpoint.",
     },
+    {
+      level: 4 as const,
+      title: "Level 4 — a map a model compiled for you",
+      note:
+        "Level 3's dispatcher, but the map is minified Python that a model wrote " +
+        "from your corpus ahead of time, so each line says what the tool is *for* " +
+        "and when to prefer it over a similar name. Deliberately larger than level " +
+        "3: it is buying back the semantics level 3 deletes. Requires a compiled " +
+        "artifact — `npx toolgz compile` — and the model calls by real function " +
+        "name rather than by code.",
+    },
   ];
 
   for (const { level, title, note } of LEVELS) {
-    const c = compress(DEMO_TOOLS, { level });
+    const c = compress(DEMO_TOOLS, level === 4 ? { level, compiled: COMPILED } : { level });
     const sys = c.systemPreamble ? `${SYSTEM}\n\n${c.systemPreamble}` : SYSTEM;
     const after = count ? await count(c.tools as unknown[], sys) : null;
 

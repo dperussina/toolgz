@@ -16,8 +16,13 @@ A **library**, not an app. It compresses LLM tool definitions so agents burn les
 window per turn. Model- and framework-agnostic: consumers pass in tool schemas, get back a
 compact wire representation plus a bidirectional translator.
 
-There is no server, no daemon, no CLI product. The deliverable is an installable package with
-a small stable API and documentation.
+There is no server and no daemon. The deliverable is an installable package with a small
+stable API and documentation.
+
+It does ship **one** command, `toolgz compile`, which turns a tool catalogue into a level-4
+Python map. That is a build-time utility for a library feature, not a product: it exists
+because compilation needs a model and the library must never depend on one. It talks to the
+provider over built-in `fetch` and adds no dependency.
 
 **The problem is context-window occupancy, not cost.** Tool definitions sit at the front of
 the prompt and are cache-eligible, so caching already handles most of the *cost*. It does not
@@ -28,10 +33,10 @@ reclamation is the product.
 
 ## Status: shipped, and still being measured
 
-Published as `toolgz` on npm — 0.2.0 at the time of writing. 283 tests, clean typecheck,
-zero runtime dependencies.
+Published as `toolgz` on npm. 446 tests, clean typecheck, zero runtime dependencies.
 
-Six benchmark rounds so far; `docs/RESULTS.md` is the evidence log.
+Eight benchmark rounds so far; `docs/RESULTS.md` is the evidence log. Do not restate the
+test count here without checking it — `tests/docs-api.test.ts` fails on a stale one.
 
 **Figures live in exactly two places and nowhere else:** `docs/RESULTS.md`, and the
 README's headline results table. That table is the one permitted restatement — a reader
@@ -59,7 +64,13 @@ The four findings that should not be relitigated without new data:
 2. **Level 1 is free**: fewer tokens, zero malformed arguments, zero extra turns. It is
    the default, and it saves 13–32%. The 71–85% figures are level 3.
 3. **Level 2 is dominated by level 3** on every axis, with more malformed arguments.
-4. **Turns dominate map size.** One extra turn is worth ~3,300 prompt tokens; the best
+4. **Level 4 is level 3 with a model-compiled map.** It is deliberately *larger* than
+   level 3 — it buys back the semantics level 3 deletes, for catalogues whose names
+   collide. It needs a compiled artifact (`npx toolgz compile`), so `recommendLevel`
+   never returns it; it points at the command instead. Measured over 180 live runs in
+   RESULTS.md Round 8. Do not quote a level-4 figure as if it were level 3: on the real
+   corpus level 3 is 2,987 tokens and level 4 is 12,441.
+5. **Turns dominate map size.** One extra turn is worth ~3,300 prompt tokens; the best
    encoding change available was worth ~550. Six map styles were tried and removed in
    0.2.0 because they were smaller and still worse.
 
@@ -113,7 +124,17 @@ Full text in `docs/CONSTITUTION.md`. The load-bearing ones:
   than dropping it. This is exactly where the 14 malformed args were caught.
 - **Errors must be intelligible to the model.** An unknown name must point at the lookup tool.
 - **No silent truncation.** A dropped field, enum, or constraint is surfaced, never discarded.
-- **`src/` makes no network calls.** A `fetch` in `src/` is a defect. Network belongs to `bench/`.
+- **`src/` makes no network calls, with exactly one carve-out.** A `fetch` anywhere in
+  `src/` except `src/cli/` is a defect; network belongs to `bench/`. `src/cli/compile.ts`
+  is the exception because a CLI has to reach a provider somehow, and built-in `fetch` is
+  what keeps the dependency count at zero. `compileTools()` in the library proper reaches
+  a model **only** through a `complete` function the caller supplies — it must never import
+  an SDK or read a key.
+- **The library core stays runtime-agnostic.** `types: ["node"]` is in tsconfig so the CLI
+  can be written at all, which also makes Node globals visible everywhere else. Nothing
+  outside `src/cli/` may import a `node:` builtin or touch `process` — the library is meant
+  to run in a worker or an edge function, and a stray `process.env` would build, test, and
+  fail only in someone's deploy. `tests/packaging.test.ts` enforces both rules.
 - **Never estimate tokens.** Use `messages.count_tokens`. `tiktoken` is OpenAI's tokenizer and
   is wrong for Claude by 15–20%+.
 - **Raw results are immutable.** `bench/results/*.jsonl` is evidence. Add new files; never
