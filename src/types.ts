@@ -92,7 +92,17 @@ export type MapStyle =
    * the gap was the doc comment, not the code — so this tests the hint without paying
    * for the notation.
    */
-  | "signature-doc";
+  | "signature-doc"
+  /**
+   * EXPERIMENTAL. The corpus as minified Python, compiled ahead of time by a model.
+   *
+   * Unlike every other style this one is not derived from the schema — a model rewrites
+   * each tool as `def name(params):"what it does and when to reach for it"`, which is
+   * how semantics survive a level-3 map at all. Requires `compiled`; see
+   * bench/compile-python.ts, which verifies every emitted parameter against the real
+   * schema before accepting a line.
+   */
+  | "python";
 
 export type CompressOptions = {
   level?: Level;
@@ -123,6 +133,15 @@ export type CompressOptions = {
    * benchmark result and not yet in hand.
    */
   signaturePrefix?: boolean;
+  /**
+   * Pre-compiled map lines, keyed by real tool name. Only read by `mapStyle: "python"`.
+   *
+   * Produced offline by a model, because the library has zero runtime dependencies and
+   * cannot call one itself. A tool with no entry falls back to its signature line and is
+   * counted in `stats.uncompiledTools`, so partial compilation degrades rather than
+   * breaks.
+   */
+  compiled?: Record<string, string>;
   /** Cap how many results a search/query meta-call returns. Default 8. */
   searchLimit?: number;
   /** Validate arguments against the original schema before dispatch. Default true. */
@@ -183,6 +202,11 @@ export type CompressStats = {
   ambiguousMapLines?: number;
   /** Level 3 only. Size of the largest such group. 1 means every line is distinct. */
   largestLookalikeGroup?: number;
+  /**
+   * `mapStyle: "python"` only. Tools with no entry in `compiled`, which fell back to a
+   * mechanically derived signature line. Non-zero means the map is a mixture.
+   */
+  uncompiledTools?: number;
 };
 
 export type CompressResult = {

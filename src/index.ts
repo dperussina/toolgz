@@ -58,6 +58,7 @@ const MAP_STYLES: MapStyle[] = [
   "typescript",
   "typescript-doc",
   "signature-doc",
+  "python",
 ];
 
 const err = (message: string, recoverable = true): Resolution => ({
@@ -421,9 +422,19 @@ export function compress(
   // against a full schema's ~400 — to reduce malformed arguments on models that
   // fill the generic argument bag poorly.
   const isTs = mapStyle === "typescript" || mapStyle === "typescript-doc";
+  const compiled = options.compiled ?? {};
+  let uncompiled = 0;
   const renderLine = (code: string, t: NormalizedTool): string => {
     const req = t.schema.required ?? [];
     // Full signature: optional params included, so the model rarely needs q().
+    if (mapStyle === "python") {
+      const line = compiled[t.name];
+      if (line) return line;
+      // No compiled entry: fall back to something correct rather than omitting the tool,
+      // and make the mixture visible in stats instead of silent.
+      uncompiled++;
+      return `def ${t.name}(${(t.schema.required ?? []).join(",")}):"" `.trimEnd();
+    }
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
     if (mapStyle === "signature-doc") {
       const d = firstSentence(t.description ?? "").trim();
@@ -455,6 +466,12 @@ export function compress(
     // with identical signatures but different one-liners ARE distinguishable. Counting
     // only the signature understated exactly the variant most likely to help.
     if (mapStyle === "typescript-doc") return `${firstSentence(t.description ?? "")}|${tsSignature(t, "")}`;
+    if (mapStyle === "python") {
+      const line = compiled[t.name] ?? "";
+      // Everything after the tool name: params plus the docstring, which is the whole
+      // discriminator for this style.
+      return line.slice(line.indexOf("(") + 1);
+    }
     if (isTs) return tsSignature(t, "");
     if (mapStyle === "signature-doc")
       return `${firstSentence(t.description ?? "")}|${signatureLine(t).slice(t.name.length)}`;
@@ -471,6 +488,7 @@ export function compress(
   const mapDiagnostics: Partial<CompressStats> = {
     ambiguousMapLines: lookalikeSizes.reduce((sum, n) => sum + n, 0),
     largestLookalikeGroup: lookalikeSizes.length ? Math.max(...lookalikeSizes) : 1,
+    ...(mapStyle === "python" ? { uncompiledTools: uncompiled } : {}),
   };
   const wire = [
     {
@@ -530,7 +548,15 @@ export function compress(
     `t(f="${[...tsGroups.keys()][0] ?? "ns"}.${tsGroups.values().next().value?.[0]?.op ?? "op"}", a={…}). ` +
     `Use q to look up a function by keyword.`;
 
-  const systemPreamble = isTs
+  const pyPreamble =
+    "The tools available to you, as Python declarations. The docstring says what each one" +
+    " is for and when to prefer it over a similar name:\n\n```python\n" +
+    lines.join("\n") +
+    '\n```\nInvoke with t(f="<function name>", a={…}). Use q to search by keyword.';
+
+  const systemPreamble = mapStyle === "python"
+    ? pyPreamble
+    : isTs
     ? tsPreamble
     : `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 

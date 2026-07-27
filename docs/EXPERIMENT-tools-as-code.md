@@ -1,5 +1,9 @@
 # Experiment: tools as code
 
+> **Read the second half first.** The mechanical TypeScript transliteration below was a
+> misreading of the brief and it lost. The idea that worked is **AI-compiled minified
+> Python**, at the end.
+
 Branch `experiment/tools-as-code`. **Not merged, not released, not behaviourally tested.**
 
 ## Hypothesis
@@ -92,3 +96,79 @@ never exhibited this failure mode.
 | `signature-doc` | **candidate** — measure live before shipping |
 | `typescript` | dominated on size/ambiguity; only a malformed-argument win could save it |
 | `typescript-doc` | dominated by `signature-doc` at equal ambiguity |
+
+
+---
+
+# Part 2: AI-compiled minified Python — the idea that worked
+
+The brief was not "transliterate the schema into code". It was: **have a model rewrite the
+corpus as minified Python, where the docstring says how the tool is actually leveraged.**
+That is a different thing, and it wins.
+
+## How it works
+
+`bench/compile-python.ts` is a **build step**, not a runtime one — the library has zero
+runtime dependencies and cannot call a model. It batches the corpus to Claude and asks for
+exactly one line per tool:
+
+```python
+def append_to_article(article_id,section_title,content,append_reason,confidence):"add new section to end of existing article; safer than update_article which replaces"
+```
+
+Required parameters bare, optional as `=0`, and the docstring carrying purpose plus *when
+to prefer this over a similarly named tool*. The result is passed to
+`compress(tools, { level: 3, mapStyle: "python", compiled })`.
+
+**Every emitted line is verified against the real schema before it is accepted**: the tool
+may not be renamed, no parameter may be invented, no required parameter may be dropped, and
+the docstring must be a single quoted string. A line that fails is retried individually and
+then discarded rather than shipped. A discarded tool falls back to a mechanical signature
+line and is counted in `stats.uncompiledTools`, so partial compilation degrades instead of
+breaking. **149/149 compiled and verified on the real corpus.**
+
+## Measured, real tokens (`count_tokens`, `claude-opus-5`)
+
+| style | tokens | saved vs L0 | % of 200k | ambiguous lines |
+|---|---:|---:|---:|---:|
+| L0 uncompressed | 68,501 | — | 34.3% | — |
+| `name+required` | 2,987 | 95.6% | 1.5% | 101/149 |
+| `signature` | 8,711 | 87.3% | 4.4% | 56/149 |
+| **`python`** | **12,441** | **81.8%** | **6.2%** | **0/149** |
+| `signature-doc` | 12,802 | 81.3% | 6.4% | 0/149 |
+| `typescript-doc` | 18,781 | 72.6% | 9.4% | 0/149 |
+
+**`python` is the cheapest style that carries semantics** — narrowly under `signature-doc`
+and 34% under `typescript-doc`, at zero ambiguous lines. Round trip is 149/149 calling by
+real function name, again with no resolver change.
+
+## Why it beats `signature-doc`, which costs about the same
+
+Size is a tie; content is not. `signature-doc` truncates the tool's own first sentence,
+which on this corpus is frequently boilerplate — *"[Financial] Accessorial revenue details
+for syncing"*. The compiled line is written to disambiguate:
+
+- *"yearly accessorial charge rollup …; **use for aggregates not line-item details**"*
+- *"add new section to end of existing article; **safer than update_article which replaces**"*
+- *"Gemini multimodal on Azure blob **OR** url (pass one); analysis_type:vision|audio|document|code_execution"*
+
+The last one states a mutual-exclusivity constraint **that is not in the schema at all**.
+No mechanical style can produce that, because the information is not there to transform.
+
+## What is still unmeasured
+
+No model has been run against this. Zero accuracy, turn-count or malformed-argument data
+exists. Two specific risks a live run has to answer:
+
+1. **The compiled docstring is an assertion by a model about another tool.** Verification
+   covers the contract — names, parameters — but nothing checks that *"safer than
+   update_article"* is true. A confidently wrong hint is worse than no hint.
+2. Compilation is a one-off cost that must be re-run whenever the registry changes, and a
+   stale compiled map is a map that lies. It needs a freshness check keyed on the corpus.
+
+## Proposed next step
+
+Tier-0: arms `signature`, `signature-doc`, `python`, 2 scenarios × 1 rep × 4 providers,
+about 24 runs. `python` and `signature-doc` cost the same, so the comparison isolates
+exactly one variable — whether an AI-written disambiguating hint beats a truncated first
+sentence.
