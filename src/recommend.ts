@@ -49,10 +49,15 @@ export type Recommendation = {
  * provider's own schema enforcement, and that is not a trade to make on a
  * caller's behalf because their tool array grew.
  *
- * Returns 0, 1 or 3 — never 2. **0 means "this library has nothing to offer
- * here"**: level 1 would inflate the block, and it is too small for level 3's
- * trade to be worth it. Saying so is more useful than recommending a transform
- * that makes the payload bigger.
+ * Returns 0, 1 or 3 — never 2, and never 4. **0 means "this library has nothing
+ * to offer here"**: level 1 would inflate the block, and it is too small for
+ * level 3's trade to be worth it. Saying so is more useful than recommending a
+ * transform that makes the payload bigger.
+ *
+ * It never returns 4 because level 4 needs a compiled artifact the caller may
+ * not have, and a recommendation you cannot act on is not a recommendation.
+ * Instead, when it recommends 3 and that map would be mostly lookalike lines,
+ * the reason says so and names `npx toolgz compile` as the fix.
  */
 export function recommendLevel(
   tools: Tool[],
@@ -124,9 +129,28 @@ export function recommendLevel(
     };
   }
 
+  // Level 3's map is only as good as your tool names. Measure how much of it would carry
+  // no information beyond a name, and say so — a caller who is told "use level 3" and
+  // hands the model 44 identical lines has been given bad advice with a straight face.
+  //
+  // This does not return 4. Level 4 needs a compiled artifact the caller may not have,
+  // and a recommendation you cannot act on is not a recommendation. It points at the
+  // command that produces one.
+  const l3 = compress(tools, { level: 3 }).stats;
+  const ambiguous = l3.ambiguousMapLines ?? 0;
+  const AMBIGUITY_TRIGGER = 0.25;
+  const mapWarning =
+    toolCount > 0 && ambiguous / toolCount >= AMBIGUITY_TRIGGER
+      ? ` **Check your map before shipping this**: ${ambiguous} of ${toolCount} level-3 map lines would be indistinguishable from another apart from the tool name${
+          (l3.largestLookalikeGroup ?? 1) > 1 ? `, the largest group being ${l3.largestLookalikeGroup}` : ""
+        }. On a catalogue like that the model has only the name to go on and picks by keyword — measured 3-of-3 wrong on one real registry. Either \`mapStyle: "signature"\`, or compile a level-4 map with \`npx toolgz compile\` so each line says what the tool is for.`
+      : "";
+
   return {
     ...base,
     level: 3,
-    reason: `${toolCount} tools take ~${l1Tokens.toLocaleString()} tokens at level 1; level 3 replaces them with two dispatcher tools plus a cached map. Measured on 149 real MCP tools: 41,648 tokens at level 1 against 2,980 at level 3, and 60/60 tasks completed across four frontier providers with zero hallucinated names. The cost is roughly 0.3-1.7 lookup calls per task — so about half an extra turn — plus the loss of provider-side argument checking. Keep \`validate\` on; it is what catches malformed arguments instead. If latency matters more than context, stay at level 1.`,
+    reason:
+      `${toolCount} tools take ~${l1Tokens.toLocaleString()} tokens at level 1; level 3 replaces them with two dispatcher tools plus a cached map. Measured on 149 real MCP tools: 41,648 tokens at level 1 against 2,980 at level 3, and 60/60 tasks completed across four frontier providers with zero hallucinated names. The cost is roughly 0.3-1.7 lookup calls per task — so about half an extra turn — plus the loss of provider-side argument checking. Keep \`validate\` on; it is what catches malformed arguments instead. If latency matters more than context, stay at level 1.` +
+      mapWarning,
   };
 }

@@ -1,13 +1,13 @@
 # Examples
 
-Five runnable programs, in the order worth reading them. **Every one runs offline** — no
+Six runnable programs, in the order worth reading them. **Every one runs offline** — no
 API key, no network, no cost. Run any of them straight from a clone:
 
 ```bash
 npx tsx examples/01-minimal.ts
 ```
 
-They are not illustrative sketches. `tests/examples-run.test.ts` executes all five with
+They are not illustrative sketches. `tests/examples-run.test.ts` executes all six with
 every API key blanked and fails if any exits non-zero, prints nothing, or emits
 `undefined` / `NaN` / `[object Object]`. So an example that drifts out of date is a
 failing build, not a bug report from you.
@@ -23,6 +23,7 @@ failing build, not a bug report from you.
 | 3 | [`03-mcp-servers.ts`](03-mcp-servers.ts) | 149 real tools from 14 MCP servers, at all four levels |
 | 4 | [`04-providers.ts`](04-providers.ts) | The four provider envelopes, and two gotchas that cost real debugging time |
 | 5 | [`05-per-model.ts`](05-per-model.ts) | Per-model style selection, and reading `stats` to see what actually happened |
+| 6 | [`06-level4.ts`](06-level4.ts) | A compiled Python map: what it fixes, and the three guarantees that make it safe |
 
 ---
 
@@ -160,6 +161,31 @@ four separate times.
 > `tiktoken` for Claude — it is OpenAI's tokenizer and is wrong for Claude by 15–20%+.
 
 ---
+
+## 6. `06-level4.ts` — a map a model compiled for you
+
+Two tools that take identical arguments, so only the name distinguishes them — exactly the
+case level 3's map cannot help with:
+
+```
+level 3 map:
+  a0 article_append article_id,content
+  a1 article_update article_id,content
+  → 2 of 2 lines are indistinguishable apart from the name
+
+level 4 map:
+  def article_append(article_id,content):"add to end, keeping existing text; use over article_update to avoid overwriting"
+  def article_update(article_id,content):"overwrite whole article body, old text lost; use article_append to add"
+  → 0 ambiguous
+```
+
+It then demonstrates the three guarantees that make a compiled map safe to rely on: a line
+that invents a parameter is refused, a line whose schema has since changed is **dropped**
+rather than shown (the schema is the fingerprint — no bookkeeping), and
+`requireCompiled: true` turns a partial map into a failure for CI.
+
+Runs offline: the compiled map is committed. In production you generate one with
+`npx toolgz compile --tools ./tools.json --out ./toolmap.json`.
 
 ## Where to go next
 

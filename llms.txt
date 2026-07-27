@@ -76,7 +76,8 @@ before toolgz existed.
 ## Choosing a level
 
 Ask, don't guess: `recommendLevel(myTools)` returns `{ level, reason }` — **0, 1 or 3**,
-never 2.
+never 2 and never 4. When it says 3 and that map would be mostly lookalike lines, the
+reason says how many and points at `npx toolgz compile`.
 
 `level: 0` means *leave the tools alone*: level 1 would make this block larger, and it is
 too small for level 3 to be worth giving up provider-side validation. Level 1 is not
@@ -89,6 +90,7 @@ already one short sentence it adds ~15% instead. Do not override a 0 without mea
 | **1** | one native tool each, flattened schemas | real | **yes** | **default.** Reclaims 13–39% on verbose real-world schemas; **inflates ~15% on already-terse ones** |
 | 2 | one tool per namespace | real | no | only if you need real op names on the wire |
 | **3** | one dispatcher + one lookup | codes | no | **large tool sets.** Up to ~85–96% |
+| **4** | one dispatcher + one lookup | real names | no | when level 3's map would be all lookalikes; needs `compiled` |
 
 The switch is the **size** of the level-1 block, not the tool count — threshold 10,000
 tokens (~5% of a 200k window). A tool is 20 to 460 tokens depending on schema verbosity,
@@ -112,6 +114,42 @@ the only signal and the model keyword-matches. Measured on a real 60-tool regist
 `mapStyle: "signature"` gave 2/60 and 0 wrong picks, for 4,242 more tokens.
 
 **A high number means switch to `mapStyle: "signature"`.** Do not ignore it.
+
+## Level 4 — a map a model compiled for you
+
+Levels 0-3 derive the map from your schema, so they can only rearrange information that is
+already there. When tool names collide there is nothing left to rearrange. Level 4 has a
+model rewrite the corpus first:
+
+```python
+def article_append(article_id,content):"add to end, keeping existing text; use over article_update"
+```
+
+Bring your own model — the library never imports an SDK:
+
+```ts
+const { compiled } = await compileTools(myTools, {
+  complete: async ({ system, user }) => yourClient.run(system, user),
+});
+compress(myTools, { level: 4, compiled });
+```
+
+Or `npx toolgz compile --tools ./tools.json --out ./toolmap.json`.
+
+- Every compiled line is verified against the real schema — no renamed tool, no invented
+  parameter, no dropped required parameter. Failures are discarded, not shipped.
+- A tool with no compiled entry falls back to a bare signature line and is counted in
+  `stats.uncompiledTools`. Check it.
+- `compress(tools, { level: 4 })` without `compiled` throws. There is no silent empty map.
+- Measured over **180 live runs on four frontier models**: every task completed, zero
+  hallucinated tool names, one recovered malformed argument. See docs/RESULTS.md Round 8.
+- Staleness is caught at compress() time — every compiled line is re-verified against the
+  live schema, so a map compiled before a tool changed shape has that line **dropped** and
+  listed in `stats.staleCompiledTools`. The schema is the fingerprint; there is nothing to
+  maintain.
+- `requireCompiled: true` turns a partial map into a throw. Use it in CI.
+- **What it cannot do:** check whether a docstring is *true*. Verification covers the
+  contract, not the claim.
 
 ## Two hard facts about level 3
 

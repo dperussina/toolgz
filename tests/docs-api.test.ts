@@ -11,10 +11,12 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { compress } from "../src/index.js";
+import { compress, MAP_STYLES } from "../src/index.js";
 import type { Tool } from "../src/types.js";
 
-const VALID_STYLES = ["name+required", "explicit", "signature"];
+// Derived, not copied. A hardcoded list here went stale the moment styles were added on
+// a branch, and a guard that fails on correct docs teaches people to disable it.
+const VALID_STYLES: string[] = [...MAP_STYLES];
 // Includes specs/, because a stale `mapStyle: "grouped"` example survived there while
 // README and docs/ were clean — the guard has to cover everywhere prose lives.
 const DOCS = [
@@ -75,12 +77,25 @@ describe("documented counts are not stale", () => {
   it("no doc claims a test count that is not the real one", () => {
     // AGENTS.md said 71 and the README said 131 while the suite was at 239. A number
     // that only a human updates is a number that goes stale.
+    //
+    // The band used to be a hardcoded 200-400 and went stale itself — it failed a correct
+    // claim of 446. It is now derived: a doc can never claim fewer tests than there are
+    // `it(` declarations on disk, and never more than a plausible multiple of them. The
+    // gap exists because loops and `it.each` expand one declaration into many at runtime
+    // (300 declarations produce 446 tests today), so an exact match is not available
+    // without executing the suite from inside itself.
+    const declared = readdirSync("tests", { recursive: true } as any)
+      .filter((f: any) => String(f).endsWith(".ts"))
+      .reduce((n: number, f: any) => n + (read(`tests/${f}`).match(/\bit\(/g)?.length ?? 0), 0);
+    expect(declared, "no test declarations found — the guard would pass on nothing").toBeGreaterThan(50);
+
     const offenders: string[] = [];
     for (const file of DOCS) {
       for (const m of read(file).matchAll(/(\d+)\s+(?:unit\s+)?tests\b/g)) {
         const claimed = Number(m[1]);
-        // Allow only a plausible current figure; anything far off is stale.
-        if (claimed < 200 || claimed > 400) offenders.push(`${file}: "${m[0]}"`);
+        if (claimed < declared || claimed > declared * 2.5) {
+          offenders.push(`${file}: "${m[0]}" (there are ${declared} it() declarations)`);
+        }
       }
     }
     expect(offenders, `stale test counts:\n  ${offenders.join("\n  ")}`).toEqual([]);

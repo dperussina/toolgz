@@ -36,8 +36,14 @@ export type NormalizedTool = {
  *  1  signature          — flatten JSON Schema, keep native tools + real names
  *  2  namespace          — collapse related ops into one tool per namespace
  *  3  minified           — single dispatcher + opaque codes
+ *  4  compiled           — single dispatcher + a map a model wrote for you
+ *
+ * Level 4 is level 3 with the map replaced by minified Python that a model compiled
+ * from your corpus ahead of time, so the map carries what each tool is FOR. It needs a
+ * `compiled` artifact — see `compileTools()` or `npx toolgz compile`. Every other level
+ * is derived mechanically from your schemas and needs nothing.
  */
-export type Level = 0 | 1 | 2 | 3;
+export type Level = 0 | 1 | 2 | 3 | 4;
 
 // Type-only, so the cycle with policy.generated.ts (which imports MapStyle from
 // here) is erased at compile time.
@@ -104,6 +110,24 @@ export type CompressOptions = {
    * benchmark result and not yet in hand.
    */
   signaturePrefix?: boolean;
+  /**
+   * Pre-compiled map lines, keyed by real tool name. Required at level 4.
+   *
+   * Produced offline by a model, because the library has zero runtime dependencies and
+   * cannot call one itself. A tool with no entry falls back to its signature line and is
+   * counted in `stats.uncompiledTools`, so partial compilation degrades rather than
+   * breaks.
+   */
+  compiled?: Record<string, string>;
+  /**
+   * Level 4 only. Throw if any tool lacks a usable compiled line, instead of falling back
+   * to a bare signature for it. Default false.
+   *
+   * Off by default because a partial map still works and degrading beats failing at
+   * runtime. Turn it on in CI or at startup, where a silently half-compiled map is a
+   * regression you want to hear about rather than a page of `stats` nobody reads.
+   */
+  requireCompiled?: boolean;
   /** Cap how many results a search/query meta-call returns. Default 8. */
   searchLimit?: number;
   /** Validate arguments against the original schema before dispatch. Default true. */
@@ -164,6 +188,23 @@ export type CompressStats = {
   ambiguousMapLines?: number;
   /** Level 3 only. Size of the largest such group. 1 means every line is distinct. */
   largestLookalikeGroup?: number;
+  /**
+   * Level 4 only. Tools with no usable entry in `compiled`, which fell back to a
+   * mechanically derived signature line. Non-zero means the map is a mixture.
+   */
+  uncompiledTools?: number;
+  /**
+   * Level 4 only. Compiled lines that no longer match the tool they describe — the
+   * parameters changed after the map was compiled.
+   *
+   * This is how staleness is caught: a map compiled against an older registry shows the
+   * model parameters that no longer exist, which is worse than showing it nothing. Stale
+   * lines are dropped and fall back to a signature line, so they also appear in
+   * `uncompiledTools`. Re-run `npx toolgz compile`.
+   */
+  staleCompiledTools?: string[];
+  /** Level 4 only. Entries in `compiled` for tools not in this corpus. Harmless, but a hint the map is out of date. */
+  orphanedCompiledEntries?: number;
 };
 
 export type CompressResult = {

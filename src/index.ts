@@ -33,6 +33,7 @@ import {
   terseDescriptor,
 } from "./render/index.js";
 import { validateArgs } from "./runtime/validate.js";
+import { verifyCompiledLine } from "./compile.js";
 import { nearest } from "./runtime/similar.js";
 import { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
 import type { PolicyEntry, BrokenEntry } from "./policy.generated.js";
@@ -46,8 +47,13 @@ export { POLICY, BROKEN, CONSERVATIVE_DEFAULT } from "./policy.generated.js";
 export type { PolicyEntry, BrokenEntry, Objective } from "./policy.generated.js";
 
 const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz";
-const LEVELS: Level[] = [0, 1, 2, 3];
-const MAP_STYLES: MapStyle[] = ["name+required", "explicit", "signature"];
+const LEVELS: Level[] = [0, 1, 2, 3, 4];
+/** Exported so docs guards derive the valid set instead of keeping their own copy. */
+export const MAP_STYLES: MapStyle[] = [
+  "name+required",
+  "explicit",
+  "signature",
+];
 
 const err = (message: string, recoverable = true): Resolution => ({
   kind: "error",
@@ -123,7 +129,7 @@ export function compress(
 ): CompressResult {
   const level = (options.level ?? 1) as Level;
   if (!LEVELS.includes(level)) {
-    throw new Error(`unsupported level: ${level} (expected 0, 1, 2 or 3)`);
+    throw new Error(`unsupported level: ${level} (expected 0, 1, 2, 3 or 4)`);
   }
 
   // Default is "name+required", chosen on measurement rather than taste.
@@ -165,7 +171,9 @@ export function compress(
   // -- level 3 code assignment ----------------------------------------------
   const codeToTool = new Map<string, NormalizedTool>();
   const toolToCode = new Map<string, string>();
-  if (level === 3) {
+  // Level 4 is level 3 with a compiled map, so it shares code assignment, the resolver
+  // and the name index. Only the rendering of the map differs.
+  if (level >= 3) {
 
     let ni = 0;
     for (const [, list] of groups) {
@@ -207,7 +215,7 @@ export function compress(
     if (seen === undefined) normIndex.set(k, t);          // first claim
     else if (seen && seen.name !== t.name) normIndex.set(k, null); // ambiguous
   };
-  if (level === 3) {
+  if (level >= 3) {
     for (const t of tools) registerNorm(t.name, t);
     for (const [code, t] of codeToTool) registerNorm(code, t);
   }
@@ -399,8 +407,19 @@ export function compress(
   }
 
   // -------------------------------------------------------------------------
-  // Level 3 — minified dispatcher + opaque codes
+  const compiled = options.compiled ?? {};
+  let uncompiled = 0;
+  const stale: string[] = [];
+  // Levels 3 and 4 — minified dispatcher, with a mechanical or a compiled map
   // -------------------------------------------------------------------------
+  const isCompiled = level === 4;
+  if (isCompiled && !Object.keys(compiled).length) {
+    throw new Error(
+      "level 4 needs a compiled map. Generate one with `npx toolgz compile` or " +
+        "compileTools(tools, { complete }), then pass it as { compiled }. " +
+        "Every other level is derived from your schemas and needs nothing.",
+    );
+  }
   // Map line rendering. Default is `code name`: a prose descriptor reintroduces
   // per-tool text into the cached prefix and, measured at 60 tools, made level 3
   // LARGER than level 2. The name is the densest useful selector, and full
@@ -412,6 +431,20 @@ export function compress(
   const renderLine = (code: string, t: NormalizedTool): string => {
     const req = t.schema.required ?? [];
     // Full signature: optional params included, so the model rarely needs q().
+    if (isCompiled) {
+      const line = compiled[t.name];
+      // Re-verify at the point of use, not just at compile time. A map compiled against
+      // an older registry would otherwise show the model parameters that no longer exist,
+      // which is worse than showing it nothing — this is how staleness is caught without
+      // any fingerprint bookkeeping, because the schema itself is the fingerprint.
+      const problem = line ? verifyCompiledLine(line, t) : null;
+      if (line && !problem) return line;
+      if (problem) stale.push(`${t.name}: ${problem}`);
+      // Emit something correct rather than omitting the tool, and make the mixture
+      // visible in stats instead of silent.
+      uncompiled++;
+      return `def ${t.name}(${(t.schema.required ?? []).join(",")}):"(not compiled)"`;
+    }
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
     if (req.length) return `${code} ${t.name} ${req.join(",")}`;
     // No required parameters. `explicit` says so, because a bare name is
@@ -432,6 +465,11 @@ export function compress(
    */
   const lineBody = (t: NormalizedTool): string => {
     const req = t.schema.required ?? [];
+    if (isCompiled) {
+      // Params plus docstring — the whole discriminator at level 4.
+      const line = compiled[t.name] ?? "";
+      return line.slice(line.indexOf("(") + 1);
+    }
     if (mapStyle === "signature") return signatureLine(t).slice(t.name.length);
     if (req.length) return req.join(",");
     return mapStyle === "explicit" ? "()" : "";
@@ -445,12 +483,21 @@ export function compress(
   const mapDiagnostics: Partial<CompressStats> = {
     ambiguousMapLines: lookalikeSizes.reduce((sum, n) => sum + n, 0),
     largestLookalikeGroup: lookalikeSizes.length ? Math.max(...lookalikeSizes) : 1,
+    ...(isCompiled
+      ? {
+          uncompiledTools: uncompiled,
+          staleCompiledTools: stale,
+          orphanedCompiledEntries: Object.keys(compiled).filter((n) => !byName.has(n)).length,
+        }
+      : {}),
   };
   const wire = [
     {
       name: "t",
       description:
-        "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
+        isCompiled
+          ? "Invoke a tool by its function name, exactly as declared in the Python block in the system prompt."
+          : "Invoke a tool by its map code. Codes are listed in <toolmap> in the system prompt.",
       input_schema: {
         type: "object",
         properties: {
@@ -463,13 +510,16 @@ export function compress(
     {
       name: "q",
       description:
-        "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
+        isCompiled
+          ? "Expand a function name to its full description and parameter signature (c), or search the declarations by keyword (s)."
+          : "Expand a map code to its full name, description and parameter signature (c), or search the map by keyword (s).",
       input_schema: {
         type: "object",
         properties: { c: { type: "string" }, s: { type: "string" } },
       },
     },
   ];
+
   const mapLegend =
     mapStyle === "signature"
       ? "Each line is: code name(args), where ? marks optional. "
@@ -478,7 +528,23 @@ export function compress(
         : "Each line is: code name required-args. ";
   const invokeHint =
     "Invoke with t(f=<code>, a={…}). Use q to expand a code before calling if you are unsure of its parameters.";
-  const systemPreamble = `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
+  const pyPreamble =
+    "The tools available to you, as Python declarations. The docstring says what each one" +
+    " is for and when to prefer it over a similar name:\n\n```python\n" +
+    lines.join("\n") +
+    '\n```\nInvoke with t(f="<function name>", a={…}). Use q to search by keyword.';
+
+  if (isCompiled && options.requireCompiled && uncompiled > 0) {
+    const detail = stale.length ? `\n  stale: ${stale.join("\n  stale: ")}` : "";
+    throw new Error(
+      `requireCompiled: ${uncompiled} of ${tools.length} tools have no usable compiled line.` +
+        ` Re-run \`npx toolgz compile\`.${detail}`,
+    );
+  }
+
+  const systemPreamble = isCompiled
+    ? pyPreamble
+    : `<toolmap>\n${lines.join("\n")}\n</toolmap>\n${mapLegend}${invokeHint}`;
 
   return finish(
     wire,
@@ -507,11 +573,18 @@ export function compress(
       if (name === "q") {
         if (args.c !== undefined) {
           const t = lookupMapKey(args.c);
-          if (!t) return err(`No map code "${args.c}". Search with q(s=…).`);
+          if (!t)
+            return err(
+              isCompiled
+                ? `No function named "${args.c}". Search with q(s=…).`
+                : `No map code "${args.c}". Search with q(s=…).`,
+            );
           return {
             kind: "meta",
             name,
-            result: `${args.c} = ${signatureLine(t, t.name)} — ${t.description}`,
+            result: isCompiled
+              ? `${compiled[t.name] ?? signatureLine(t, t.name)}\n\nFull description: ${t.description}`
+              : `${args.c} = ${signatureLine(t, t.name)} — ${t.description}`,
           };
         }
         const q = String(args.s ?? "").toLowerCase();
@@ -522,7 +595,14 @@ export function compress(
               t.description.toLowerCase().includes(q),
           )
           .slice(0, searchLimit)
-          .map(([c, t]) => `${c} = ${signatureLine(t, t.name)}`);
+          // Level 4 has no codes in its map, so answering a search with codes hands the
+          // model a handle it did not see and cannot cross-reference. Same defect that
+          // made grok-4.5 invent q(c="a2"); the search results are the other half of it.
+          .map(([c, t]) =>
+            isCompiled
+              ? (compiled[t.name] ?? signatureLine(t, t.name))
+              : `${c} = ${signatureLine(t, t.name)}`,
+          );
         return {
           kind: "meta",
           name,
@@ -543,7 +623,9 @@ export function compress(
         // A near miss is the common case, and a bare rejection costs another turn.
         const guess = nearest(String(args.f ?? ""), [...codeToTool.keys()]);
         return err(
-          `No map code "${args.f}". Search with q(s=…).` +
+          (isCompiled
+            ? `No function named "${args.f}". Search with q(s=…).`
+            : `No map code "${args.f}". Search with q(s=…).`) +
             (guess ? ` Did you mean "${guess}"? Use it exactly as written in <toolmap>.` : ""),
         );
       }
@@ -566,6 +648,9 @@ export function compress(
     mapDiagnostics,
   );
 }
+
+export { compileTools, verifyCompiledLine, describeForCompile, COMPILE_SYSTEM_PROMPT } from "./compile.js";
+export type { Completion, CompileOptions, CompileResult } from "./compile.js";
 
 export { recommendLevel } from "./recommend.js";
 export type { Recommendation } from "./recommend.js";

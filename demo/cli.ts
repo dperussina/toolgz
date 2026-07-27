@@ -13,6 +13,7 @@
  * be the thing that changes that.
  */
 import "dotenv/config";
+import { readFileSync } from "node:fs";
 import { compress } from "../src/index.js";
 import type { Level, Tool } from "../src/types.js";
 import { forAnthropic } from "../src/providers/index.js";
@@ -52,9 +53,11 @@ function block(s: string, indent = "  ", tone: (x: string) => string = (x) => x)
   const put = (l: string) => console.log(indent + tone(l));
   for (const raw of s.split("\n")) {
     if (raw.length <= room) { put(raw); continue; }
-    // Never re-wrap a markdown table row or a fenced code line: inserting an indent
-    // mid-row destroys the alignment that makes it readable. Let the terminal decide.
-    if (/^\s*\|/.test(raw) || (raw.match(/\|/g) ?? []).length >= 2) { put(raw); continue; }
+    // Never re-wrap a markdown table row: inserting an indent mid-row destroys the
+    // alignment that makes it readable. Only a leading pipe counts — the "2+ pipes"
+    // version of this rule also matched Python enum hints like `state:open|closed|all`,
+    // so some declarations wrapped and others ran off the edge.
+    if (/^\s*\|/.test(raw)) { put(raw); continue; }
     let cur = "";
     for (const word of raw.split(" ")) {
       if (cur && (cur + " " + word).length > room) { put(cur); cur = word; }
@@ -194,9 +197,19 @@ const TASK =
   "Find the most frequent unresolved error in the Sentry project 'web-frontend' (environment production), " +
   "then file a GitHub issue about it in owner 'acme', repo 'web'. Use the error title as the issue title.";
 
+/**
+ * Level 4's map is compiled ahead of time by a model, so the demo ships the artifact
+ * rather than spending an API call per run. Regenerate with:
+ *   npx toolgz compile --tools <tools.json> --out demo/toolmap.json
+ */
+const COMPILED: Record<string, string> = JSON.parse(
+  readFileSync(new URL("./toolmap.json", import.meta.url), "utf8"),
+);
+const optsFor = (level: Level) => (level === 4 ? { level, compiled: COMPILED } : { level });
+
 // ── what a level does to your tool definitions ──────────────────────────────
 function showTransform(level: Level) {
-  const c = compress(TOOLS, { level });
+  const c = compress(TOOLS, optsFor(level));
   const before = compress(TOOLS, { level: 0 });
 
   step(1, "Your tools, exactly as your MCP client hands them over",
@@ -216,7 +229,7 @@ function showTransform(level: Level) {
   );
 
   const pct = c.stats.savedPct;
-  step(2, `compress(tools, { level: ${level} })`,
+  step(2, level === 4 ? `compress(tools, { level: 4, compiled })` : `compress(tools, { level: ${level} })`,
     `${c.stats.toolCount} tools → ${bold(String(c.stats.wireToolCount))} on the wire · ` +
     `${n(c.stats.originalChars)} → ${n(c.stats.compressedChars)} chars ` +
     `(${pct >= 0 ? green(`${pct.toFixed(1)}% smaller`) : yellow(`${Math.abs(pct).toFixed(1)}% LARGER`)})`);
@@ -252,7 +265,9 @@ function offlineModel(level: Level, c: ReturnType<typeof compress>) {
   let i = 0;
   const codeFor = (real: string) => (level === 3 ? c.codeFor(real) : real);
   const wrap = (real: string, args: any) =>
-    level === 3
+    level === 4
+      ? { name: "t", input: { f: real, a: args } }   // level 4 calls by real function name
+      : level === 3
       ? { name: "t", input: { f: codeFor(real), a: args } }
       : level === 2
         ? (c.encodeCallForTest(real, args) as any)
@@ -399,7 +414,7 @@ async function run(level: Level, opts: { offline: boolean; model: string }): Pro
   if (s.errors) console.log(`    recovered errors   ${yellow(String(s.errors))} ${dim("(returned to the model, then retried)")}`);
   console.log(rule());
 
-  if (level === 3) {
+  if (level >= 3) {
     console.log();
     console.log(`  ${bold("THE OTHER TWO OUTCOMES")} ${dim("— demonstrated, not part of the run above")}`);
     const bad = c.resolve("t", { f: "zz9", a: {} });
@@ -425,11 +440,11 @@ const offline = process.argv.includes("--offline") || !process.env.ANTHROPIC_API
 const model = arg("model") ?? "claude-opus-5";
 const compare = process.argv.includes("--compare");
 const levels: Level[] = compare
-  ? [0, 1, 3]
+  ? [0, 1, 3, 4]
   : [(Number(arg("level") ?? 3) as Level)];
 
-if (!compare && ![0, 1, 2, 3].includes(levels[0])) {
-  console.error(`--level must be 0, 1, 2 or 3`);
+if (!compare && ![0, 1, 2, 3, 4].includes(levels[0])) {
+  console.error(`--level must be 0, 1, 2, 3 or 4`);
   process.exit(1);
 }
 if (offline && !process.env.ANTHROPIC_API_KEY && !process.argv.includes("--offline")) {

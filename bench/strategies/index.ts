@@ -23,7 +23,13 @@
  *
  * tests/parity.test.ts enforces the wrapper property.
  */
+import { readFileSync } from "node:fs";
 import { compress } from "../../src/index.js";
+
+/** Committed so the level-4 arm is reproducible without compiling on every sweep. */
+const PYTHON_MAP: Record<string, string> = JSON.parse(
+  readFileSync(new URL("../fixtures/python-map.json", import.meta.url), "utf8"),
+);
 import type { MapStyle } from "../../src/types.js";
 import type {
   CompressionStrategy,
@@ -38,7 +44,12 @@ export {
   flattenSchema,
 } from "../../src/render/index.js";
 
-type LibOpts = { level: 0 | 1 | 2 | 3; mapStyle?: MapStyle; signaturePrefix?: boolean };
+type LibOpts = {
+  level: 0 | 1 | 2 | 3 | 4;
+  mapStyle?: MapStyle;
+  signaturePrefix?: boolean;
+  compiled?: Record<string, string>;
+};
 
 /**
  * Wrap a library configuration as an arm.
@@ -202,7 +213,21 @@ export const signaturesNoPrefix = fromLibrary(
   { level: 1, signaturePrefix: false },
 );
 
+/**
+ * Level 4: the map is minified Python a model compiled from this corpus.
+ *
+ * The artifact is committed (bench/fixtures/python-map.json) so the arm is reproducible
+ * without an API call at run time — compilation is a build step, and re-compiling per
+ * sweep would meanevery run measured a slightly different map.
+ */
+export const compiledPython = fromLibrary(
+  "compiled",
+  "Arm E · level 4, compiled Python map",
+  { level: 4, compiled: PYTHON_MAP },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
+  compiledPython,
   signaturesNoPrefix,
   minifiedPlus,
   minifiedSig,
@@ -219,4 +244,5 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedSig, opts: { level: 3, mapStyle: "signature" } },
   { arm: minifiedExplicit, opts: { level: 3, mapStyle: "explicit" } },
   { arm: signaturesNoPrefix, opts: { level: 1, signaturePrefix: false } },
+  { arm: compiledPython, opts: { level: 4, compiled: PYTHON_MAP } },
 ];

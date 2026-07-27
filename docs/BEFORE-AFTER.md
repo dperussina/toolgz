@@ -476,6 +476,101 @@ What `resolve()` hands your dispatcher — the original name and arguments:
 
 ---
 
+## Level 4 — a map a model compiled for you
+
+Level 3's dispatcher, but the map is minified Python that a model wrote from your corpus ahead of time, so each line says what the tool is *for* and when to prefer it over a similar name. Deliberately larger than level 3: it is buying back the semantics level 3 deletes. Requires a compiled artifact — `npx toolgz compile` — and the model calls by real function name rather than by code.
+
+**717 tokens** total, against 1021 uncompressed — the tool block itself goes from 996 tokens to 692, a **31% reduction**.
+
+### Tools array — 2 entries
+
+```json
+[
+  {
+    "name": "t",
+    "description": "Invoke a tool by its function name, exactly as declared in the Python block in the system prompt.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "f": {
+          "type": "string"
+        },
+        "a": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "f"
+      ]
+    }
+  },
+  {
+    "name": "q",
+    "description": "Expand a function name to its full description and parameter signature (c), or search the declarations by keyword (s).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "c": {
+          "type": "string"
+        },
+        "s": {
+          "type": "string"
+        }
+      }
+    }
+  }
+]
+```
+
+### System prompt
+
+```text
+You are an operations agent. Use the tools available to you.
+
+The tools available to you, as Python declarations. The docstring says what each one is for and when to prefer it over a similar name:
+
+```python
+def github_create_issue(owner,repo,title,body=None,labels=None):"open issue as authed user; not for comments/PRs"
+def github_search_issues(q,sort=None,per_page=None):"GitHub-wide issue+PR search by query; sort:comments|created|updated"
+def slack_post_message(channel,text,thread_ts=None):"send Slack message as app; thread_ts to reply in thread"
+```
+Invoke with t(f="<function name>", a={…}). Use q to search by keyword.
+```
+
+### Round trip
+
+What the model emits at this level:
+
+```json
+{
+  "name": "t",
+  "args": {
+    "f": "a0",
+    "a": {
+      "owner": "acme",
+      "repo": "web",
+      "title": "Retry logic drops errors"
+    }
+  }
+}
+```
+
+What `resolve()` hands your dispatcher — the original name and arguments:
+
+```json
+{
+  "kind": "call",
+  "name": "github_create_issue",
+  "args": {
+    "owner": "acme",
+    "repo": "web",
+    "title": "Retry logic drops errors"
+  }
+}
+```
+
+---
+
 ## The recovery paths, at level 3
 
 These are the outputs your loop feeds back to the model. They are written

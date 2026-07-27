@@ -292,3 +292,64 @@ describe("it never recommends a level that inflates the payload", () => {
     }
   });
 });
+
+describe("it warns when the level-3 map would carry nothing but names", () => {
+  /**
+   * `recommendLevel` is the entry point, and it used to send callers to level 3 without
+   * mentioning that their map might be useless. On a real 60-tool registry where 19 tools
+   * are named `manage_*`, 44 of 60 level-3 lines were indistinguishable apart from the
+   * name and the model picked wrong 3 times out of 3. Advice that confident, that wrong,
+   * is worse than silence.
+   *
+   * It still never returns 4 — that needs a compiled artifact the caller may not have —
+   * so it names the command that produces one.
+   */
+  const lookalikes = (n: number): Tool[] =>
+    Array.from({ length: n }, (_, i) => ({
+      name: `manage_${["table", "rows", "memories", "intel"][i % 4]}${i}`,
+      description: `Manage ${i}. ${"Prose to push the block over the threshold. ".repeat(6)}`,
+      inputSchema: { type: "object", properties: { operation: { type: "string" } }, required: ["operation"] },
+    }));
+
+  it("names the count, the largest group, and the way out", () => {
+    const r = recommendLevel(lookalikes(200));
+    expect(r.level, "still 3 — level 4 needs an artifact the caller may not have").toBe(3);
+    expect(r.reason).toMatch(/200 of 200 level-3 map lines/);
+    expect(r.reason).toMatch(/largest group being 200/);
+    expect(r.reason).toMatch(/npx toolgz compile/);
+    expect(r.reason).toMatch(/mapStyle: "signature"/);
+  });
+
+  it("the warning matches what compress() actually reports", () => {
+    // Two code paths computing the same thing is how they drift.
+    const tools = lookalikes(120);
+    const stats = compress(tools, { level: 3 }).stats;
+    expect(recommendLevel(tools).reason).toContain(
+      `${stats.ambiguousMapLines} of ${tools.length} level-3 map lines`,
+    );
+  });
+
+  it("stays quiet when the map is discriminating", () => {
+    // Distinct signatures per tool, big enough to clear the level-3 threshold.
+    const distinct: Tool[] = Array.from({ length: 90 }, (_, i) => ({
+      name: `svc${i}_op`,
+      description: `Operation ${i}. ${"Verbose enough to clear the size threshold. ".repeat(6)}`,
+      inputSchema: {
+        type: "object",
+        properties: Object.fromEntries(
+          Array.from({ length: (i % 6) + 1 }, (_, j) => [`p${i}_${j}`, { type: "string" }]),
+        ),
+        required: [`p${i}_0`],
+      },
+    }));
+    const r = recommendLevel(distinct);
+    expect(r.level).toBe(3);
+    expect(compress(distinct, { level: 3 }).stats.ambiguousMapLines).toBe(0);
+    expect(r.reason, "no warning when there is nothing to warn about").not.toMatch(/Check your map/);
+  });
+
+  it("does not warn on the level-1 or level-0 paths, which have no map", () => {
+    const small: Tool[] = [{ name: "a_b", description: "Does a thing at length. ".repeat(3), inputSchema: { type: "object", properties: { x: { type: "string" } }, required: ["x"] } }];
+    expect(recommendLevel(small).reason).not.toMatch(/Check your map/);
+  });
+});
