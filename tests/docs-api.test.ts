@@ -86,20 +86,43 @@ describe("documented counts are not stale", () => {
     expect(offenders, `stale test counts:\n  ${offenders.join("\n  ")}`).toEqual([]);
   });
 
-  it("no doc claims a version below the current major.minor", () => {
+  it("no doc tells you to install a version that is not the current one", () => {
+    /**
+     * Narrowed after it failed the 0.3.0 release for no good reason.
+     *
+     * The original rule was "flag any 0.<min-1>.x mention", rescued by a keyword list.
+     * That made every minor bump break the build on legitimate history — "deleted in
+     * 0.2.0", "reverted in 0.2.8" — and it flagged seven such lines while finding no
+     * real staleness at all. A guard whose false-positive rate is 100% on a routine
+     * action is worse than no guard, because the fix becomes "add another keyword".
+     *
+     * So it now checks only the thing that can actually mislead a reader: a version
+     * pinned in an install or dependency position. Narrative history is left alone,
+     * which is what RESULTS.md and the release notes are for.
+     */
     const pkg = JSON.parse(read("package.json"));
-    const [maj, min] = pkg.version.split(".").map(Number);
     const offenders: string[] = [];
-    for (const file of DOCS) {
-      for (const line of read(file).split("\n")) {
-        // Release history and process docs legitimately name old versions.
-        if (/0\.1\.|release|publish|changelog|removed in|superseded/i.test(line)) continue;
-        for (const m of line.matchAll(/\b(\d+)\.(\d+)\.\d+\b/g)) {
-          if (Number(m[1]) === maj && Number(m[2]) < min) offenders.push(`${file}: ${m[0]}`);
-        }
+    // An install instruction or a dependency declaration — the only two places a reader
+    // copies a version and ends up on an old package. A bare `toolgz@0.1.0` in prose is
+    // history: docs/RELEASING.md narrates a failed first publish and must stay readable.
+    const PINNED = /(?:(?:npm\s+(?:i|install)|npx|yarn\s+add|pnpm\s+add)\s+toolgz@|"toolgz"\s*:\s*"[\^~]?)(\d+\.\d+\.\d+)/g;
+    for (const file of DOCS.concat("package.json")) {
+      for (const m of read(file).matchAll(PINNED)) {
+        if (m[1] !== pkg.version) offenders.push(`${file}: pins toolgz@${m[1]}, current is ${pkg.version}`);
       }
     }
-    expect(offenders).toEqual([]);
+    expect(offenders, offenders.join("\n  ")).toEqual([]);
+  });
+
+  it("still catches a doc that pins an outdated version", () => {
+    // Proves the narrowed rule has teeth, since the previous version of this test was
+    // passing for the wrong reason and then failing for the wrong reason.
+    const pkg = JSON.parse(read("package.json"));
+    const PINNED = /(?:(?:npm\s+(?:i|install)|npx|yarn\s+add|pnpm\s+add)\s+toolgz@|"toolgz"\s*:\s*"[\^~]?)(\d+\.\d+\.\d+)/g;
+    const fake = `Install with \`npm i toolgz@0.0.1\` today.`;
+    const found = [...fake.matchAll(PINNED)].map((m) => m[1]);
+    expect(found).toEqual(["0.0.1"]);
+    expect(found[0]).not.toBe(pkg.version);
   });
 });
 

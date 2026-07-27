@@ -97,8 +97,15 @@ cleaning up.
 
 ```bash
 npm version patch        # or minor / major — commits and tags
+npm test                 # AFTER the bump, not before
 git push --follow-tags
 ```
+
+**Run the suite after the bump.** `npm version` commits and tags without running anything,
+and some guards read `package.json`. The 0.3.0 release failed in CI for exactly this
+reason: tests passed at 0.2.12, the minor bump moved a version guard's threshold, and every
+historical `0.2.x` mention in the docs became an offender. The guard was wrong and has been
+narrowed, but the ordering above is what makes that class of failure visible locally.
 
 Then create a GitHub Release for that tag. The workflow will:
 
