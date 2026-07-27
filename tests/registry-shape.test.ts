@@ -244,3 +244,65 @@ describe("level 4 — a map a model compiled for you", () => {
     expect(compress(tools, { level: 4, compiled }).stats.uncompiledTools).toBe(0);
   });
 });
+
+describe("level 4 speaks function names everywhere, not codes", () => {
+  /**
+   * Level 4's map contains no codes, so every surface that mentions one is an invitation
+   * to invent one. grok-4.5 did exactly that in the 144-run sweep — `q(c="a2")`, twice —
+   * because `t` and `q` still described themselves in terms of "map codes".
+   *
+   * The dispatcher wording was fixed first; these cover the rest of the surface, including
+   * the search results, which were still answering in codes the model had never seen.
+   */
+  const tools: Tool[] = [
+    { name: "github_create_issue", description: "File a bug.", inputSchema: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
+    { name: "sentry_list_issues", description: "List errors.", inputSchema: { type: "object", properties: { project: { type: "string" } }, required: ["project"] } },
+  ];
+  const compiled = {
+    github_create_issue: `def github_create_issue(owner,repo):"file bug on repo"`,
+    sentry_list_issues: `def sentry_list_issues(project):"unresolved errors, most frequent first"`,
+  };
+  const c = () => compress(tools, { level: 4, compiled });
+
+  it("the dispatcher tells the model to use function names", () => {
+    const wire = c().tools as any[];
+    expect(wire.find((t) => t.name === "t").description).toMatch(/function name/);
+    expect(wire.find((t) => t.name === "t").description).not.toMatch(/map code/);
+    expect(wire.find((t) => t.name === "q").description).toMatch(/function name/);
+  });
+
+  it("an unknown target is reported as a missing function, not a missing code", () => {
+    const r = c().resolve("t", { f: "zz9", a: {} });
+    expect(r.kind).toBe("error");
+    if (r.kind === "error") {
+      expect(r.message).toMatch(/No function named "zz9"/);
+      expect(r.message).not.toMatch(/map code/);
+    }
+  });
+
+  it("a keyword search answers with compiled declarations, not codes", () => {
+    const r = c().resolve("q", { s: "bug" });
+    expect(r.kind).toBe("meta");
+    if (r.kind === "meta") {
+      expect(r.result).toContain("def github_create_issue(owner,repo)");
+      // A code-shaped prefix like `a0 = ` would hand the model a handle it never saw.
+      expect(r.result).not.toMatch(/^[a-z]+\d+\s*=/m);
+    }
+  });
+
+  it("expanding one function returns its declaration plus the full description", () => {
+    const r = c().resolve("q", { c: "sentry_list_issues" });
+    expect(r.kind).toBe("meta");
+    if (r.kind === "meta") {
+      expect(r.result).toContain("def sentry_list_issues(project)");
+      expect(r.result).toContain("List errors.");
+    }
+  });
+
+  it("level 3 still speaks codes — none of this leaked downward", () => {
+    const three = compress(tools, { level: 3 });
+    expect((three.tools as any[]).find((t) => t.name === "t").description).toMatch(/map code/);
+    const r = three.resolve("q", { s: "bug" });
+    if (r.kind === "meta") expect(r.result).toMatch(/^[a-z]+\d+\s*=/m);
+  });
+});

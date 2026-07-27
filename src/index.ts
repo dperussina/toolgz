@@ -582,7 +582,9 @@ export function compress(
           return {
             kind: "meta",
             name,
-            result: `${args.c} = ${signatureLine(t, t.name)} — ${t.description}`,
+            result: isCompiled
+              ? `${compiled[t.name] ?? signatureLine(t, t.name)}\n\nFull description: ${t.description}`
+              : `${args.c} = ${signatureLine(t, t.name)} — ${t.description}`,
           };
         }
         const q = String(args.s ?? "").toLowerCase();
@@ -593,7 +595,14 @@ export function compress(
               t.description.toLowerCase().includes(q),
           )
           .slice(0, searchLimit)
-          .map(([c, t]) => `${c} = ${signatureLine(t, t.name)}`);
+          // Level 4 has no codes in its map, so answering a search with codes hands the
+          // model a handle it did not see and cannot cross-reference. Same defect that
+          // made grok-4.5 invent q(c="a2"); the search results are the other half of it.
+          .map(([c, t]) =>
+            isCompiled
+              ? (compiled[t.name] ?? signatureLine(t, t.name))
+              : `${c} = ${signatureLine(t, t.name)}`,
+          );
         return {
           kind: "meta",
           name,
