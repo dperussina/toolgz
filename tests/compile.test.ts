@@ -10,7 +10,8 @@
  * dispatch rather than an error.
  */
 import { describe, it, expect } from "vitest";
-import { compileTools, verifyCompiledLine } from "../src/index.js";
+import { readFileSync } from "node:fs";
+import { compileTools, verifyCompiledLine, COMPILE_SYSTEM_PROMPT } from "../src/index.js";
 import type { Tool } from "../src/types.js";
 
 const TOOLS: Tool[] = [
@@ -60,6 +61,36 @@ describe("verifyCompiledLine refuses anything that misrepresents the tool", () =
 
   it("accepts optional parameters in any order but requires every required one", () => {
     expect(verifyCompiledLine(`def github_create_issue(title,owner,repo,body=0):"x"`, t)).toBeNull();
+  });
+});
+
+describe("the optional-parameter convention, which live testing corrected", () => {
+  /**
+   * The first compiled corpus wrote optional parameters as `name=0`. Every provider read
+   * that as a type declaration rather than a marker for "optional": three of four sent
+   * `latest_snapshot_only: 1` for a boolean and were rejected by validation — a 3-in-8
+   * malformed-argument rate, identical failure, independently arrived at.
+   *
+   * `=None` is the idiomatic Python sentinel and implies no type. Re-running the same
+   * eight live calls after the change took malformed arguments to zero.
+   *
+   * Offline metrics — size, ambiguity — could not have caught this. It is pinned here
+   * because it is a one-word detail in a prompt with an outsized effect.
+   */
+  it("the prompt asks for =None and explicitly forbids =0", () => {
+    const prompt = COMPILE_SYSTEM_PROMPT(110);
+    expect(prompt).toContain("name=None");
+    expect(prompt).toMatch(/never 0/);
+    expect(prompt, "the worked example must not contradict the rule").not.toMatch(/=0[,)]/);
+  });
+
+  it("the committed corpus map uses no numeric defaults", () => {
+    const map: Record<string, string> = JSON.parse(
+      readFileSync("bench/fixtures/python-map.json", "utf8"),
+    );
+    const offenders = Object.entries(map).filter(([, line]) => /=0[,)]/.test(line));
+    expect(offenders.map(([n]) => n), "a numeric default reads as a type").toEqual([]);
+    expect(Object.keys(map).length).toBeGreaterThan(100);
   });
 });
 

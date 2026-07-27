@@ -15,7 +15,15 @@
 import type { Tool } from "./types.js";
 import { normalize, defaultNamespaceOf } from "./render/index.js";
 
-/** Bring your own model. Return the assistant's text; throw to abort compilation. */
+/**
+ * Bring your own model. Return the assistant's text; throw to abort compilation.
+ *
+ * Note on the parameter convention the prompt enforces: optional parameters are written
+ * `name=None`, never `name=0`. The first draft used `=0` and every provider read it as a
+ * type declaration — three of four sent `latest_snapshot_only: 1` for a boolean and were
+ * rejected by validation. A default value in a signature is information whether you meant
+ * it or not.
+ */
 export type Completion = (input: { system: string; user: string }) => Promise<string>;
 
 export type CompileOptions = {
@@ -47,7 +55,8 @@ def <name>(<params>):"<docstring>"
 Rules, all mandatory:
 - <name> is the tool name verbatim. Never rename.
 - <params> are the real parameter names. Required ones first and bare; optional ones as
-  name=0. Never invent, rename, drop or reorder a required parameter.
+  name=None. Never invent, rename, drop or reorder a required parameter. Use None and
+  never 0 — a numeric default tells the reader the parameter is a number.
 - The docstring is the whole point. In as few characters as possible say WHAT it does and
   WHEN to reach for it instead of a similarly-named tool. If a parameter takes a fixed set
   of values, list them as k:a|b|c. Drop articles, drop pleasantries, drop restating the
@@ -59,7 +68,7 @@ Example input:
   github_create_issue — "Create a new issue in a GitHub repository. Use this when the user
   wants to file a bug or request a feature." params: owner*, repo*, title*, body, labels
 Example output:
-  def github_create_issue(owner,repo,title,body=0,labels=0):"file bug/feature on repo; not for comments or PRs"`;
+  def github_create_issue(owner,repo,title,body=None,labels=None):"file bug/feature on repo; not for comments or PRs"`;
 
 import type { NormalizedTool } from "./types.js";
 
