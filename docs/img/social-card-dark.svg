@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <rect width="1200" height="630" fill="#1a1a19"/>
+  <rect width="1200" height="630" fill="#141413"/>
   <rect x="0" y="0" width="1200" height="4" fill="#1baf7a"/>
 
   <text x="56" y="80" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="27" font-weight="700" fill="#ffffff">toolgz</text>
@@ -20,7 +20,7 @@
     <text x="56" y="326" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">30,817 → <tspan fill="#1baf7a" font-weight="700">4,628</tspan> tokens</text>
 
     <rect x="372" y="300" width="560" height="20" rx="4" fill="#2c2c2a"/>
-    <rect x="456.09903624622774" y="300" width="2" height="20" fill="#1a1a19"/>
+    <rect x="456.09903624622774" y="300" width="2" height="20" fill="#141413"/>
     <rect x="372" y="300" width="84.09903624622773" height="20" rx="4" fill="#1baf7a"/>
 
     <text x="1144" y="311" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−85%</text>
@@ -30,7 +30,7 @@
     <text x="56" y="388" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">17,522 → <tspan fill="#1baf7a" font-weight="700">2,663</tspan> tokens</text>
 
     <rect x="372" y="362" width="318.40607456923124" height="20" rx="4" fill="#2c2c2a"/>
-    <rect x="420.3914722393484" y="362" width="2" height="20" fill="#1a1a19"/>
+    <rect x="420.3914722393484" y="362" width="2" height="20" fill="#141413"/>
     <rect x="372" y="362" width="48.39147223934841" height="20" rx="4" fill="#1baf7a"/>
 
     <text x="1144" y="373" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−85%</text>
@@ -40,7 +40,7 @@
     <text x="56" y="450" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">10,948 → <tspan fill="#1baf7a" font-weight="700">2,302</tspan> tokens</text>
 
     <rect x="372" y="424" width="198.94473829379888" height="20" rx="4" fill="#2c2c2a"/>
-    <rect x="413.8314566635299" y="424" width="2" height="20" fill="#1a1a19"/>
+    <rect x="413.8314566635299" y="424" width="2" height="20" fill="#141413"/>
     <rect x="372" y="424" width="41.83145666352987" height="20" rx="4" fill="#1baf7a"/>
 
     <text x="1144" y="435" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−79%</text>
@@ -50,7 +50,7 @@
     <text x="56" y="512" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#898781">7,694 → <tspan fill="#1baf7a" font-weight="700">2,196</tspan> tokens</text>
 
     <rect x="372" y="486" width="139.81373916993869" height="20" rx="4" fill="#2c2c2a"/>
-    <rect x="411.90524710387126" y="486" width="2" height="20" fill="#1a1a19"/>
+    <rect x="411.90524710387126" y="486" width="2" height="20" fill="#141413"/>
     <rect x="372" y="486" width="39.90524710387124" height="20" rx="4" fill="#1baf7a"/>
 
     <text x="1144" y="497" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#1baf7a">−71%</text>

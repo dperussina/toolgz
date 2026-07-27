@@ -91,7 +91,7 @@ type Theme = {
 const THEMES: Theme[] = [
   {
     name: "dark",
-    surface: "#1a1a19",
+    surface: "#141413",
     ink: "#ffffff",
     secondary: "#c3c2b7",
     muted: "#898781",

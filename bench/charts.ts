@@ -40,7 +40,7 @@ const LIGHT: Theme = {
   good: "#006300",
 };
 const DARK: Theme = {
-  surface: "#1a1a19",
+  surface: "#141413",
   ink: "#ffffff",
   ink2: "#c3c2b7",
   muted: "#898781",

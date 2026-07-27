@@ -1,4 +1,7 @@
-<h1>toolgz</h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.svg">
+  <img src="docs/img/logo-light.svg" alt="toolgz" width="280">
+</picture>
 
 <p><strong>Your agent spends 30–70k tokens of context on tool definitions before the user types a word. toolgz gets up to ~85% of it back.</strong></p>
 
@@ -38,6 +41,11 @@ doesn't need in order to pick correctly. Fifty tools is 20k tokens. A hundred is
 
 Prompt caching makes those tokens *cheap*. It does not make them take up less *room*.
 Reclaiming the room is what this does.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/occupancy-dark.svg">
+  <img src="docs/img/occupancy-light.svg" alt="A 200,000 token context window shown twice. Uncompressed, 149 MCP tool definitions occupy 68,536 tokens — 34.3% of the window — before the user says anything. At level 3 the same tools occupy 3,022 tokens, 1.5%. 434 real tools fit in 200k uncompressed against ~10,000 at level 3.">
+</picture>
 
 ## The fix, in three lines
 

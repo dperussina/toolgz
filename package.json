@@ -16,7 +16,8 @@
     "img:metaphor": "tsx bench/metaphor.ts",
     "demo": "tsx demo/cli.ts",
     "bench:noprefix": "tsx -r dotenv/config bench/harness/run-multi.ts --provider=all --suite=real --variants --arms=signatures,signatures-noprefix --reps=2 --scenario=real-daily-vs-weekly,real-overwrite-vs-append,real-status-vs-result,real-rollup-vs-detail",
-    "img:card": "tsx bench/level3-card.ts"
+    "img:card": "tsx bench/level3-card.ts",
+    "img:brand": "tsx bench/brand.ts"
   },
   "keywords": [
     "llm",

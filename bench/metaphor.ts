@@ -22,7 +22,7 @@ const LIGHT: Theme = {
   muted: "#898781", rule: "#e1e0d9", series: "#2a78d6", good: "#006300", caution: "#8a5a00",
 };
 const DARK: Theme = {
-  surface: "#1a1a19", panel: "#242423", ink: "#ffffff", ink2: "#c3c2b7",
+  surface: "#141413", panel: "#242423", ink: "#ffffff", ink2: "#c3c2b7",
   muted: "#898781", rule: "#2c2c2a", series: "#3987e5", good: "#0ca30c", caution: "#bd8010",
 };
 

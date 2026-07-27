@@ -21,7 +21,13 @@ const REAL: Tool[] = JSON.parse(readFileSync("bench/fixtures/real-mcp-tools.json
   (t: any) => ({ name: t.name, description: t.description, inputSchema: t.input_schema }),
 );
 
-const THEMED = ["metaphor", "savings", "reliability", "cost", "social-card"];
+/** Figures that paint their own background, so they can sit on any page. */
+const THEMED = ["metaphor", "savings", "reliability", "cost", "social-card", "level3-card", "occupancy"];
+/** Marks. These must stay transparent — a logo with a baked surface shows as a tile. */
+const MARKS = ["logo", "icon"];
+/** One dark surface across every asset: two values put a visible seam in the dark page. */
+const DARK_SURFACE = "#141413";
+const LIGHT_SURFACE = "#fcfcfb";
 
 describe("every README image ships both themes, and dark is not a copy of light", () => {
   for (const n of THEMED) {
@@ -31,12 +37,41 @@ describe("every README image ships both themes, and dark is not a copy of light"
       expect(img(`${n}-light.svg`)).not.toBe(img(`${n}-dark.svg`));
     });
 
-    it(`${n}: each theme paints its own surface`, () => {
-      // A dark variant that kept the light surface would render white-on-white.
-      expect(img(`${n}-light.svg`)).toContain("#fcfcfb");
-      expect(img(`${n}-dark.svg`)).toContain("#1a1a19");
+    it(`${n}: each theme paints its own surface, and the same one as every other asset`, () => {
+      // A dark variant that kept the light surface would render white-on-white. And two
+      // different dark surfaces across assets put a seam in the dark page — we shipped
+      // #1a1a19 in the charts against #141413 in the card and the site before this test.
+      expect(img(`${n}-light.svg`)).toContain(LIGHT_SURFACE);
+      expect(img(`${n}-dark.svg`)).toContain(DARK_SURFACE);
+      expect(img(`${n}-dark.svg`), "stale dark surface").not.toContain("#1a1a19");
     });
   }
+});
+
+describe("marks stay transparent and legible small", () => {
+  for (const n of MARKS) {
+    it(`${n}: both themes exist and neither bakes in a surface`, () => {
+      for (const theme of ["light", "dark"]) {
+        const svg = img(`${n}-${theme}.svg`);
+        expect(existsSync(`docs/img/${n}-${theme}.svg`)).toBe(true);
+        // A full-bleed rect the size of the viewBox would be a baked background.
+        expect(svg, `${n}-${theme} paints a page surface`).not.toContain(LIGHT_SURFACE);
+        expect(svg, `${n}-${theme} paints a page surface`).not.toContain(DARK_SURFACE);
+      }
+    });
+  }
+
+  it("the favicon reacts to the viewer's theme in one file", () => {
+    const f = readFileSync("docs/img/favicon.svg", "utf8");
+    expect(f).toContain("prefers-color-scheme:dark");
+  });
+
+  it("the mark is three shapes, so it survives 16px", () => {
+    // Not aesthetic policing: the first draft added chevrons and a second bar column and
+    // was unreadable as a favicon.
+    const rects = img("icon-light.svg").match(/<rect/g) ?? [];
+    expect(rects.length, "the mark has grown past a tile plus three bars").toBeLessThanOrEqual(4);
+  });
 });
 
 describe("the metaphor image quotes real numbers", () => {
