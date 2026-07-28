@@ -78,6 +78,17 @@ console.log(`after the schema changed: ${JSON.stringify(stale.stats.staleCompile
 console.log(`  the stale line is dropped, not shown:`);
 console.log(`  ${stale.systemPreamble.split("\n").find((l) => l.includes("article_append"))}`);
 
+// ── the same map, on a level that keeps provider enforcement ────────────────
+// A compiled map is not only for level 4. At level 1 the docstring replaces each tool's
+// own prose while the real schema still goes on the wire, so the provider keeps enforcing
+// arguments — the only option here that shrinks the block without giving anything up.
+const one = compress(myTools, { level: 1, compiled });
+const plain = compress(myTools, { level: 1 });
+console.log(`\nlevel 1            ${plain.stats.compressedChars} chars`);
+console.log(`level 1 + compiled ${one.stats.compressedChars} chars   (provider still enforces the schema)`);
+console.log(`  description: "${(one.tools as any[])[1].description}"`);
+console.log(`  schema kept: ${JSON.stringify((one.tools as any[])[1].input_schema.required)}`);
+
 // 3. In CI, make a partial map fail instead of quietly degrading.
 try {
   compress(moved, { level: 4, compiled, requireCompiled: true });

@@ -140,6 +140,28 @@ Recompute any figure with
 `npx tsx bench/analyze-multi.ts --sweep=2026-07-25T19-19` against the raw per-run
 records in [`bench/results/`](bench/results).
 
+### Level 3 against level 4, measured in one sweep
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/levels-dark.svg">
+  <img src="docs/img/levels-light.svg" alt="Tool block size by compression level across four providers, 96 runs from sweep 2026-07-28T01-23-31. Level 3 is smaller on every provider; level 4 uses fewer turns and lookups. 96 of 96 tasks completed, zero hallucinated tool names, one malformed argument.">
+</picture>
+
+| provider | L3 block | L4 block | L3 turns | L4 turns | L3 lookups | L4 lookups |
+|---|--:|--:|--:|--:|--:|--:|
+| `claude-opus-5` | 2,980 | 12,560 | 4.1 | **3.3** | 1.5 | **0.5** |
+| `gemini-3.1-pro-preview` | 1,748 | 9,037 | 2.3 | **2.0** | 0.3 | **0.0** |
+| `gpt-5.6-sol` | 1,477 | 7,128 | 2.3 | **2.0** | 0.1 | **0.0** |
+| `grok-4.5` | 1,780 | 8,926 | 2.7 | 2.7 | 0.7 | **0.2** |
+
+**96/96 tasks on both arms, zero hallucinated names, one malformed argument.** Level 3 is
+smaller everywhere; level 4 buys some of it back in turns and lookups — on Anthropic, 0.8
+fewer turns and a third of the lookups. At ~3,300 prompt tokens per turn that recovers about
+a quarter of the gap, not all of it.
+
+**Level 3 remains the default.** Reach for level 4 when `stats.ambiguousMapLines` says its
+map carries nothing but names. Round 10 in [docs/RESULTS.md](docs/RESULTS.md).
+
 ### How it scales, measured on real tools
 
 The table above is a synthetic 100-tool fixture. This is the real one: **149 tools
@@ -370,6 +392,13 @@ It earns its saving by stripping prose, so it needs prose to strip. On a real MC
 catalogue it nets **39% in tokens**; on tools whose descriptions are already one short
 sentence it *adds* ~15%, and `recommendLevel` returns 0 rather than recommend it.
 
+**If you have a compiled map, pass it here too.** `compress(tools, { level: 1, compiled })`
+swaps each tool's own first sentence for the compiled docstring and takes the block from
+41,655 tokens to **35,103 — 16% smaller with provider-side enforcement completely intact**,
+because these are still ordinary native tools carrying real schemas. It is the only option
+in the library that reduces the block without giving anything up. A compiled line that no
+longer matches its schema falls back to the tool's own prose.
+
 > **The dangerous middle**, an external reviewer's phrase and a better one than we had.
 > Level 1 keeps the schema, so it looks authoritative and the model has no reason to read
 > further — measured at **zero `q()` lookups per task**. Level 3, forced into lookups,
@@ -463,6 +492,16 @@ compress(myTools, { level: 3, mapStyle: "signature" });
 Measured: lookups drop to zero and it was the **fastest and cheapest** arm on OpenAI (4.0s,
 −17% cost). It is slightly larger, and on xAI it was worse than the default, so it is an
 option rather than the default.
+
+> **How much enforcement can a dispatcher have?** None, and this was measured rather
+> than assumed. Argument enforcement would need a discriminated union on `f`, and the
+> Anthropic API rejects `oneOf`/`allOf`/`anyOf` at the top level of an `input_schema` — we
+> measured the union at +112,488 characters before finding that out. Constraining `f` to an
+> `enum` of real tool names *is* legal, and was built, measured and **removed**: it cost
+> +47% to +70% of the level-3 map, prevented zero hallucinated names across 192 runs, and
+> caused the only two failures in that sweep — grok-4.5 answering with no tool call and no
+> error, the same silent-failure mode that got a map style deleted in 0.2.0. If you need
+> real enforcement, use level 1 with a compiled map.
 
 **The trade:** at levels 2, 3 and 4 the model fills a generic argument object, so the provider's
 sampler no longer enforces your schema. toolgz validates against your *original* schema and
@@ -1089,7 +1128,6 @@ number can be recomputed rather than trusted.
 | `signaturePrefix` | `boolean` | `true` | level 1 only; see below |
 | `compiled` | `Record<string, string>` | — | required at level 4, optional at level 1; see below |
 | `requireCompiled` | `boolean` | `false` | levels 1 and 4; throw instead of falling back |
-| `enforceNames` | `boolean` | `false` | levels 3–4; `enum` the dispatcher's `f` so the sampler cannot invent a name |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
 | `validate` | `boolean` | `true` | **leave this on** |
 | `model` | `string` | — | exact model id; picks the measured style. Omit and nothing changes |

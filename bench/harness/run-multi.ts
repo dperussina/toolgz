@@ -305,7 +305,10 @@ async function main() {
         }
         for (let rep = 1; rep <= reps; rep++) {
           const r = await runOne(provider, arm, sc, rep);
-          r.toolBlockTokens = block;
+          // `null`, never 0, when measureToolBlock failed. Two zero-valued runs dragged
+          // a Gemini mean from 10,267 to 8,556 and made an option that only ADDS bytes
+          // look 5% cheaper. A missing measurement must be absent, not zero.
+          r.toolBlockTokens = block > 0 ? block : (null as unknown as number);
           appendFileSync(path, JSON.stringify(r) + "\n");
           console.log(
             `   ${arm.id.padEnd(11)} rep${rep} block=${String(block).padStart(6)} ` +

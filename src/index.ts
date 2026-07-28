@@ -537,13 +537,12 @@ export function compress(
       input_schema: {
         type: "object",
         properties: {
-          // An enum here is the only enforcement a dispatcher can carry: the sampler
-          // cannot emit a name that is not on the list. Argument enforcement would need
-          // a discriminated union, which the Anthropic API rejects at the top level of
-          // an input_schema.
-          f: options.enforceNames
-            ? { type: "string", enum: tools.map((t) => t.name) }
-            : { type: "string" },
+          // Deliberately unconstrained. An `enum` of real tool names here was measured
+          // and removed: it cost +47% to +70% of the level-3 map, prevented zero
+          // hallucinated names across 192 runs, and reintroduced the silent-failure mode
+          // that got the `nocode` map style deleted in 0.2.0 — grok-4.5 answering with no
+          // tool call and no error, twice. See docs/RESULTS.md Round 10.
+          f: { type: "string" },
           a: { type: "object" },
         },
         required: ["f"],

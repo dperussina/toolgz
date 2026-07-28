@@ -365,17 +365,11 @@ describe("compiled descriptions at level 1, and name enforcement on the dispatch
     expect(before.stats.compressedChars).toBe(compress(tools, { level: 1, compiled: {} }).stats.compressedChars);
   });
 
-  it("enforceNames constrains the dispatcher to real names, at levels 3 and 4", () => {
+  it("the dispatcher's f stays unconstrained — an enum here was measured and removed", () => {
+    // +47% to +70% of the level-3 map, zero hallucinated names prevented in 192 runs, and
+    // it caused grok-4.5 to answer with no tool call and no error twice. RESULTS Round 10.
     for (const opts of [{ level: 3 as const }, { level: 4 as const, compiled }]) {
-      const off = (compress(tools, opts).tools as any[])[0].input_schema.properties.f;
-      const on = (compress(tools, { ...opts, enforceNames: true }).tools as any[])[0].input_schema.properties.f;
-      expect(off).toEqual({ type: "string" });
-      expect(on.enum).toEqual(["article_append", "article_update"]);
+      expect((compress(tools, opts).tools as any[])[0].input_schema.properties.f).toEqual({ type: "string" });
     }
-  });
-
-  it("enforceNames is off by default, so every existing caller is unchanged", () => {
-    expect((compress(tools, { level: 3 }).tools as any[])[0].input_schema.properties.f.enum).toBeUndefined();
-    expect((compress(tools, { level: 4, compiled }).tools as any[])[0].input_schema.properties.f.enum).toBeUndefined();
   });
 });

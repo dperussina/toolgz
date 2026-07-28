@@ -5,7 +5,7 @@
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
 **Round 5** — same four providers, after hardening the resolver from observed failures
 **Round 6** — real MCP tools: 149 tools from 14 live servers, replacing the synthetic fixture
-**Total**: 3,503 runs across rounds 1–9, in 26 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
+**Total**: 3,791 runs across rounds 1–10, in 28 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
 **Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze-multi.ts --sweep=<timestamp>` — the `--sweep` flag is required, because pooling runs blends library versions
 
@@ -763,6 +763,96 @@ them: 89,574 / 5,721 / 30,079 characters, unchanged.
 Open: whether `compiled` at level 1 should become a recommendation, which needs reps at
 tier 1 or above. And whether `enforceNames` is worth 11% for a guarantee against something
 that has not happened in 180 runs.
+
+## Round 10 — level 3 against level 4, and enforceNames measured and removed
+
+Sweeps `2026-07-28T00-24-06` (96 runs, level 1) and `2026-07-28T01-23-31` (192 runs, the
+dispatcher levels). Real suite, 149 tools, 6 scenarios × 2 reps × 4 providers.
+
+### `enforceNames` — built, measured, removed
+
+Constraining the dispatcher's `f` to an `enum` of real tool names is the only provider-side
+enforcement a dispatcher can carry. It is legal, unlike argument enforcement, which needs a
+discriminated union the Anthropic API rejects outright.
+
+It cost more than it was worth on every axis:
+
+| provider | level 3 | + enforceNames | level 4 | + enforceNames |
+|---|--:|--:|--:|--:|
+| `claude-opus-5` | 2,980 | 4,393 **+47%** | 12,560 | 13,973 +11% |
+| `gemini-3.1-pro-preview` | 1,748 | 2,978 **+70%** | 9,037 | 10,267 +14% |
+| `gpt-5.6-sol` | 1,477 | 2,488 **+68%** | 7,128 | 8,139 +14% |
+| `grok-4.5` | 1,780 | 2,845 **+60%** | 8,926 | 9,991 +12% |
+
+The enum is the same 3,189 characters everywhere; it is simply most of level 3's map.
+
+**And it caused the only two failures in 192 runs**, both on grok-4.5 at level 3:
+
+```
+xai · minified-enforced · real-status-vs-result  turns=1 correct=0/1 halluc=0 bad=0
+xai · minified-enforced · real-transit-vs-route  turns=1 correct=0/1 halluc=0 bad=0
+```
+
+One turn, **zero tool calls, no error raised** — the model read the tools and answered. That
+is the signature that disqualified the `nocode` map style in 0.2.0, on the same provider.
+
+Against that: **zero hallucinated tool names on any arm, in any of the 192 runs.** It was
+preventing nothing. Paying up to 70% of the map to reintroduce a known silent-failure mode
+against a threat that has never materialised is not a trade, so the option is gone.
+
+### Level 3 against level 4, in one sweep
+
+The first legal comparison — Round 8 measured level 4 alone, and pooling sweeps is
+forbidden here for good reason.
+
+| provider | L3 block | L4 block | L3 turns | L4 turns | L3 lookups | L4 lookups |
+|---|--:|--:|--:|--:|--:|--:|
+| `claude-opus-5` | 2,980 | 12,560 | 4.1 | **3.3** | 1.5 | **0.5** |
+| `gemini-3.1-pro-preview` | 1,748 | 9,037 | 2.3 | **2.0** | 0.3 | **0.0** |
+| `gpt-5.6-sol` | 1,477 | 7,128 | 2.3 | **2.0** | 0.1 | **0.0** |
+| `grok-4.5` | 1,780 | 8,926 | 2.7 | 2.7 | 0.7 | **0.2** |
+
+**96/96 tasks on both arms, zero hallucinated names, one malformed argument.**
+
+Level 3 is smaller on every provider. Level 4 buys some of it back in turns and lookups —
+on Anthropic, 0.8 fewer turns and a third of the lookups. At ~3,300 prompt tokens per turn
+that recovers roughly a quarter of the 9,580-token gap, not all of it.
+
+**So level 3 stays the default.** Level 4 is for the case it was built for: a catalogue
+whose names collide, where level 3's map carries nothing but names. `stats.ambiguousMapLines`
+is how you tell.
+
+### Level 1 with a compiled map
+
+96 runs, `signatures` against `signatures-compiled` in one sweep.
+
+| provider | L1 block | + compiled | saved |
+|---|--:|--:|--:|
+| `claude-opus-5` | 41,648 | 35,096 | 15.7% |
+| `gemini-3.1-pro-preview` | 26,913 | 22,874 | 15.0% |
+| `gpt-5.6-sol` | 15,922 | 12,655 | 20.5% |
+| `grok-4.5` | 27,691 | 23,725 | 14.3% |
+
+**96/96 tasks, 48/48 correct calls, zero hallucinated, zero malformed on both arms.** A
+written docstring selects exactly as reliably as the tool's own first sentence, and
+provider-side enforcement is untouched because these are still native tools with real
+schemas.
+
+Cheaper by median on three providers. **Anthropic is the exception**: turns went 3.4 → 4.1
+and total prompt tokens rose slightly despite the smaller block. That is the second time
+Anthropic has spent a block saving on extra turns — the first was `signaturePrefix` in
+Round 7 — so it is a pattern to watch rather than noise, though n=12 cannot settle it.
+
+**Kept**, as an option. It is the only thing in the library that reduces the tool block
+without giving up a guarantee.
+
+### A harness bug this round exposed
+
+Two Gemini runs recorded `toolBlockTokens: 0` because `measureToolBlock` threw and the
+initialised zero was written anyway. Averaged in, they dragged a mean from 10,267 to 8,556
+and made an option that only *adds* bytes appear 5% cheaper — a figure that was briefly
+reported before the payload was inspected directly. A failed measurement now records
+`null`, so it is absent rather than counted as zero.
 
 ## Findings
 

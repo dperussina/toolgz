@@ -247,6 +247,15 @@
   compiled artifact you may not have), but it tells you when your level-3 map would be all
   lookalikes and names the fix.</p>
 
+  <div class="note" style="border-left-color:var(--accent)"><p><b>Want the compression and
+  the enforcement?</b> Pass a compiled map to <em>level 1</em>:
+  <code>compress(tools, { level: 1, compiled })</code>. The docstring replaces each tool's
+  prose while the real schema still goes on the wire, so the provider keeps enforcing
+  arguments — 41,655 tokens down to <b>35,103</b>, and nothing given up. A dispatcher cannot have provider
+  enforcement at all: argument checking would need a discriminated union the API rejects,
+  and constraining the function name was measured and removed — it cost up to 70% of the
+  level-3 map and caused the only two task failures in a 192-run sweep.</p></div>
+
   <div class="note"><p><b>The trade, stated plainly:</b> at levels 2, 3 and 4 the model fills a generic
   argument object, so the provider's sampler no longer enforces your schema. toolgz validates
   against your <em>original</em> schema and returns a model-readable error instead — which is why
@@ -277,6 +286,19 @@
   (<code>search_issues</code> vs <code>list_issues</code>, approve-vs-merge, three products with
   identically shaped operations side by side) where the correct choice turns on the tool name
   compression takes away.</p>
+
+  <h3 style="margin-top:44px">Level 3 against level 4, in one sweep</h3>
+  <figure style="margin-top:18px">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="img/levels-dark.svg">
+      <img src="img/levels-light.svg" alt="Tool block size by compression level across four providers, 96 runs. Level 3 is smaller on every provider; level 4 uses fewer turns and lookups. 96 of 96 tasks completed, zero hallucinated tool names.">
+    </picture>
+    <figcaption><b>96/96 tasks, zero hallucinated tool names.</b> Level 3 is smaller
+    everywhere. Level 4 buys some of it back in turns and lookups — on Anthropic 4.1 → 3.3
+    turns and 1.5 → 0.5 lookups — which recovers about a quarter of the gap at ~3,300 prompt
+    tokens per turn. Level 3 stays the default; level 4 is for catalogues whose tool names
+    collide.</figcaption>
+  </figure>
 
   <h3 style="margin-top:44px">The ratio does not decay with scale</h3>
   <div class="scroll">
