@@ -5,7 +5,7 @@
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
 **Round 5** — same four providers, after hardening the resolver from observed failures
 **Round 6** — real MCP tools: 149 tools from 14 live servers, replacing the synthetic fixture
-**Total**: 3,791 runs across rounds 1–10, in 28 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
+**Total**: 3,791 runs across rounds 1–11, in 28 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
 **Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze-multi.ts --sweep=<timestamp>` — the `--sweep` flag is required, because pooling runs blends library versions
 
@@ -732,6 +732,12 @@ in 180 runs — so what it buys is the *kind* of guarantee, not a measured impro
 The compiled map was built to replace level 3's map. It is worth more on a level that keeps
 the schema, because there the docstring replaces prose without giving anything up.
 
+> **Superseded by Round 11.** "Without giving anything up" was wrong. The saving came from
+> dropping the signature prefix, and level 1 strips per-property descriptions, so that
+> prefix is the only place the parameter inventory appears in prose. An external team
+> measured the cost at 8.9 to 13.4 points of selection accuracy. Kept as written because
+> the error is the finding.
+
 | | tokens | vs level 0 | enforcement |
 |---|--:|--:|---|
 | level 0 | 68,501 | — | full |
@@ -853,6 +859,85 @@ initialised zero was written anyway. Averaged in, they dragged a mean from 10,26
 and made an option that only *adds* bytes appear 5% cheaper — a figure that was briefly
 reported before the payload was inspected directly. A failed measurement now records
 `null`, so it is absent rather than counted as zero.
+
+## Round 11 — an external team measures 0.5.0, and two claims fall
+
+Not our sweep. A team ran `toolgz@0.5.0` against a live 60-tool registry, 45 runs per arm
+per provider on `claude-opus-4-8` and Kimi, and reported back. Their numbers, our
+reproductions.
+
+### The level-1 compiled claim was false
+
+0.5.0 shipped `compiled` at level 1 describing it as *"the only option that reduces the
+block without giving anything up"*. It gave up the parameter inventory.
+
+| | tokens | Opus accuracy | Kimi accuracy | malformed (Opus) |
+|---|--:|--:|--:|--:|
+| level 1 | 21,356 | **68.9%** | **57.8%** | **0** |
+| level 1 + compiled | **17,401** | 60.0% | 44.4% | 4 |
+
+Level 1 strips every per-property `description` — verified on their registry: 0 of 7
+properties on `execute_coding_task` carry one, at both L1 and L1c. The signature prefix is
+therefore the only place the parameter inventory appears in prose, and the compiled
+docstring **replaced** it rather than joining it. Their model then invented `includeCharts`
+and `filename`, parameters that exist on no tool, on the arm that had been the only one in
+their entire experiment with zero malformed arguments.
+
+Reproduced on our corpus:
+
+| | chars | vs plain L1 | inventory |
+|---|--:|--:|:-:|
+| plain level 1 | 89,574 | — | yes |
+| + compiled (0.5.0 default) | 75,004 | −16.3% | **no** |
+| + compiled + `signaturePrefix` | 91,546 | +2.2% | yes |
+
+**The 16% was the inventory.** No configuration keeps both — they measured
+`signaturePrefix: true` at 3.9% *dearer* than plain level 1 on their registry, and it is
+2.2% dearer here. Fixed in 0.5.1 by defaulting the prefix back on.
+
+Their enforcement check confirmed the other half of the claim, which was true: on
+`manage_operatives`, 36 properties, 6 enum-constrained parameters and an identical
+`required` array at L0, L1 and L1c. Byte-identical. Level 1 with a compiled map really does
+keep everything the provider was validating.
+
+### `verifyCompiledLine` permitted an under-described interface
+
+Their words: it *"correctly refuses invented parameters, but it doesn't require a compiled
+line to mention the parameters that exist"*. Correct — it refuses an invented parameter and
+a dropped **required** one, and permits dropping optional ones. A docstring covering one of
+seven parameters passed verification and still degraded selection.
+
+Zero occurrences on our 149-tool corpus, which is the point: the compiler follows the
+prompt and nothing was enforcing it. `compileTools` now reports `incompleteSignatures`.
+
+### BEFORE-AFTER.md contradicted its own table
+
+Separately found while auditing. The prose read *"the saving grows with the tool count,
+because the level-3 wire payload is two tools no matter how many you start with"* — directly
+above a table showing level 2 at 4,915 characters against level 3's 8,120 at 300 tools.
+
+Level 3 sends two tools, but its **map grows one line per tool**. Measured:
+
+| tools | level 2 | level 3 | |
+|---:|--:|--:|---|
+| 100 | 3,833 | 3,420 | L3 smaller by 11% |
+| 300 | 7,033 | 9,420 | **L2 smaller by 25%** |
+| 600 | 11,833 | 18,420 | **L2 smaller by 36%** |
+
+Level 2 overtakes level 3 between 100 and 300 tools. Four documents said "level 2 is
+dominated by level 3" without qualification; it is dominated **on accuracy** — 16 malformed
+arguments against zero over 60 runs each — not on size at scale. This closes a task open
+since a colleague first reported the shape.
+
+### Their recommendation, which we agree with
+
+L3 with `mapStyle: "signature"` at 5,522 tokens beats level 1 + compiled at 17,401 on both
+cost and accuracy, on both their providers. Level 1 + compiled is the cheapest arm that
+keeps real tool names on the wire **and** full schema enforcement — which matters only if
+opaque dispatcher names are a problem for audit or logging.
+
+Note for anyone re-running their comparison on 0.5.1: their L1c arm will now measure around
+22,000 tokens rather than 17,401, because the inventory is back by default.
 
 ## Findings
 
