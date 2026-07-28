@@ -112,6 +112,11 @@ Rules, all mandatory:
   should be spent on purpose. Name a parameter only when the docstring needs to say
   something the schema cannot — that two of them are mutually exclusive, or that one must be
   set before another.
+- Never name a tool that is not in the inventory you are given. If you want to contrast this
+  tool with another, use that tool's exact name from the inventory, or describe the other case
+  without naming anything — "…if only a name/address is known" rather than inventing
+  \`place_details_by_query\`. A docstring that points at a tool which does not exist sends the
+  reader after nothing.
 - Aim for under ${maxDocChars} characters of docstring. Shorter is better if nothing is lost.
 - Output only the def lines, one per tool, no fences, no commentary, no blank lines.
 
@@ -248,9 +253,25 @@ export async function compileTools(
     }
   };
 
+  /**
+   * The full roster of real tool names, sent with every batch.
+   *
+   * The prompt asks each docstring to say when to reach for this tool "instead of a
+   * similarly-named tool" — while a batch shows the model 12 tools out of 149. So it names
+   * siblings from memory, and on this corpus it invented one: `get_place_details` compiled to
+   * "…use place_details_by_query if only name/address", and there is no such tool. The one it
+   * meant, `search_places`, is right there in the corpus. A map that points the model at a
+   * tool that does not exist is the exact failure this compiler is supposed to prevent.
+   *
+   * Names only, so it costs a few hundred tokens per request and no schemas.
+   */
+  const roster = `The complete tool inventory (names only). Any tool you name in a docstring MUST appear here, spelled exactly:\n${corpus
+    .map((t) => t.name)
+    .join(", ")}\n\nCompile these:\n\n`;
+
   for (let i = 0; i < corpus.length; i += batchSize) {
     const batch = corpus.slice(i, i + batchSize);
-    take(batch, await complete({ system, user: batch.map(describeForCompile).join("\n\n") }));
+    take(batch, await complete({ system, user: roster + batch.map(describeForCompile).join("\n\n") }));
     onProgress?.(Object.keys(compiled).length, corpus.length);
   }
 
@@ -258,7 +279,7 @@ export async function compileTools(
   // fixes it. Anything that still fails is left out, never shipped unverified.
   if (retryFailures) {
     for (const t of corpus.filter((t) => !compiled[t.name])) {
-      take([t], await complete({ system, user: describeForCompile(t) }));
+      take([t], await complete({ system, user: roster + describeForCompile(t) }));
       onProgress?.(Object.keys(compiled).length, corpus.length);
     }
   }

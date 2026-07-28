@@ -250,3 +250,64 @@ describe("staleness, partial maps and dangling references", () => {
     expect(r.danglingReferences).toEqual([]);
   });
 });
+
+/**
+ * A batch shows the model 12 tools out of 149 while the prompt asks each docstring to say
+ * when to reach for this tool instead of a similar one. That is an invitation to name a
+ * sibling from memory, and on the real corpus it accepted the invitation: `get_place_details`
+ * compiled to "…use place_details_by_query if only name/address", and no such tool exists.
+ * The one it meant, `search_places`, was in the corpus all along.
+ *
+ * `danglingReferences` caught it and it was shipped anyway, so the fix is at the cause: send
+ * every batch the full roster of real names. Recompiling with it took the corpus from two
+ * dangling references to zero, and rewrote both lines to name the real tool or name nothing.
+ */
+describe("the compiling model is given the real tool inventory", () => {
+  const seen: string[] = [];
+  const fake = async ({ user }: { system: string; user: string }) => {
+    seen.push(user);
+    const names = [...user.matchAll(/^(\w+) — /gm)].map((m) => m[1]);
+    return names.map((n) => `def ${n}():"does a thing"`).join("\n");
+  };
+
+  it("sends every tool name with every batch, not just the batch's own", async () => {
+    seen.length = 0;
+    const many: Tool[] = Array.from({ length: 30 }, (_, i) => ({
+      name: `tool_${i}`,
+      description: "Does a thing.",
+      input_schema: { type: "object", properties: {} },
+    })) as Tool[];
+
+    await compileTools(many, { complete: fake, batchSize: 12 });
+
+    expect(seen.length).toBeGreaterThan(1);
+    for (const user of seen) {
+      // A batch of 12 still learns about all 30.
+      for (const t of many) expect(user).toContain(t.name);
+      expect(user).toMatch(/MUST appear here/);
+    }
+  });
+
+  it("tells the model, in the system prompt, not to name a tool outside it", () => {
+    expect(COMPILE_SYSTEM_PROMPT(110)).toMatch(/Never name a tool that is not in the inventory/);
+  });
+
+  it("ships a corpus map with no dangling references", () => {
+    // The end state, asserted on the artifact itself: no docstring points at a tool the
+    // corpus does not contain. This is what was wrong with the map 0.6.1 published.
+    const raw = JSON.parse(readFileSync("bench/fixtures/real-mcp-tools.json", "utf8"));
+    const tools: Tool[] = Array.isArray(raw) ? raw : raw.tools;
+    const map = JSON.parse(readFileSync("bench/fixtures/python-map.json", "utf8"));
+    const compiled: Record<string, string> = map.compiled ?? map;
+    const known = new Set(tools.map((t) => t.name));
+
+    const dangling: string[] = [];
+    for (const [name, line] of Object.entries(compiled)) {
+      const doc = line.slice(line.indexOf('):"') + 3, -1);
+      for (const m of doc.matchAll(/(?:use|instead of|before|via)\s+([a-z][a-z0-9]*(?:_[a-z0-9]+)+)/g)) {
+        if (!known.has(m[1])) dangling.push(`${name} → ${m[1]}`);
+      }
+    }
+    expect(dangling, `map points at tools that do not exist:\n  ${dangling.join("\n  ")}`).toEqual([]);
+  });
+});
