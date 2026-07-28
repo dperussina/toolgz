@@ -46,8 +46,28 @@ const REAL: Tool[] = (REAL_TOOLS as any[]).map((t) => ({
   input_schema: t.input_schema,
 }));
 
-const stat = (level: 0 | 1 | 3) => compress(REAL, { level }).stats;
-const S0 = stat(0), S1 = stat(1), S3 = stat(3);
+const COMPILED: Record<string, string> = JSON.parse(
+  readFileSync(new URL("./fixtures/python-map.json", import.meta.url), "utf8"),
+);
+/**
+ * Sample lines for the panels, taken from the real corpus rather than written.
+ *
+ * The level-3 and level-4 panels used to show hand-written examples that looked like real
+ * output. Short entries are chosen because the panel is 150px wide — truncating real data
+ * is fine, inventing it is not.
+ */
+const shortest = (lines: string[], n: number) =>
+  [...lines].sort((a, b) => a.length - b.length).slice(0, n);
+
+const stat = (level: 0 | 1 | 2 | 3 | 4) =>
+  compress(REAL, level === 4 ? { level, compiled: COMPILED } : { level }).stats;
+const S0 = stat(0), S1 = stat(1), S2 = stat(2), S3 = stat(3), S4 = stat(4);
+
+const MAP3 = shortest(
+  compress(REAL, { level: 3 }).systemPreamble.split("\n").filter((l) => /^[a-z]+\d+\s/.test(l)),
+  3,
+);
+const MAP4 = shortest(Object.values(COMPILED), 3);
 const pct = (n: number) => `${n < 0 ? "+" : ""}${Math.abs(n).toFixed(1)}%`;
 
 type Panel = {
@@ -98,6 +118,25 @@ const PANELS: Panel[] = [
       menuLines(x + 12, y + 32, t, 11, [74, 62, 80, 58, 68]),
   },
   {
+    level: "Level 2",
+    title: "One waiter per section",
+    caption:
+      "Order by section instead of by dish: \"from the grill, the ribeye\". Fewer people to talk to, and the dish names are still real — but the kitchen stops checking your order.",
+    wire: `${S2.wireToolCount} tools on the wire`,
+    saved: `${pct(S2.savedPct)} smaller`,
+    savedTone: "good",
+    kitchen: "toolgz checks the order",
+    kitchenTone: "caution",
+    art: (x, y, t) =>
+      `<rect x="${x}" y="${y}" width="150" height="132" rx="6" fill="${t.surface}" stroke="${t.rule}" stroke-width="1.5"/>` +
+      ["GRILL", "PASTA", "SIDES"]
+        .map((sec, i) =>
+          `<text x="${x + 12}" y="${y + 24 + i * 40}" font-family="${FONT}" font-size="9.5" font-weight="600" fill="${t.ink}">${sec}</text>` +
+          menuLines(x + 12, y + 30 + i * 40, t, 2, [96, 74]),
+        )
+        .join(""),
+  },
+  {
     level: "Level 3",
     title: "A numbered card and one waiter",
     caption:
@@ -113,8 +152,7 @@ const PANELS: Panel[] = [
       return (
         // The card: 8px mono so the longest line clears the box it sits in.
         `<rect x="${x}" y="${y}" width="${cardW}" height="62" rx="6" fill="${t.surface}" stroke="${t.rule}" stroke-width="1.5"/>` +
-        ["a0 sheets_append", "a1 sheets_update", "b0 post_message"]
-          .map((l, i) => `<text x="${x + 8}" y="${y + 17 + i * 13}" font-family="${MONO}" font-size="8" fill="${t.series}">${esc(l)}</text>`)
+        MAP3.map((l, i) => `<text x="${x + 8}" y="${y + 17 + i * 13}" font-family="${MONO}" font-size="8" fill="${t.series}">${esc(l.slice(0, 22))}</text>`)
           .join("") +
         `<text x="${x + 8}" y="${y + 56}" font-family="${MONO}" font-size="8" fill="${t.muted}">…</text>` +
         // The waiter, from primitives: head, torso, arm, tray.
@@ -131,11 +169,40 @@ const PANELS: Panel[] = [
       );
     },
   },
+  {
+    level: "Level 4",
+    title: "The card, annotated",
+    caption:
+      "Same numbered card, but someone who knows the kitchen wrote a note beside each number saying what it is good for. Bigger than the bare card — and nobody has to ask.",
+    wire: `${S4.wireToolCount} tools on the wire`,
+    saved: `${pct(S4.savedPct)} smaller`,
+    savedTone: "good",
+    kitchen: "toolgz checks the order",
+    kitchenTone: "caution",
+    art: (x, y, t) => {
+      // Real compiled lines from the committed map, split for the two-line layout.
+      const rows = MAP4.map((line) => {
+        const cut = line.indexOf('):"');
+        return [line.slice(4, cut + 1), line.slice(cut + 3, -1)] as const;
+      });
+      return (
+        `<rect x="${x}" y="${y}" width="150" height="132" rx="6" fill="${t.surface}" stroke="${t.rule}" stroke-width="1.5"/>` +
+        rows
+          .map(
+            ([name, note], i) =>
+              `<text x="${x + 9}" y="${y + 22 + i * 34}" font-family="${MONO}" font-size="7.5" fill="${t.series}">${esc(name.slice(0, 25))}</text>` +
+              `<text x="${x + 9}" y="${y + 33 + i * 34}" font-family="${MONO}" font-size="7" fill="${t.ink2}">${esc('"' + note.slice(0, 26) + '…"')}</text>`,
+          )
+          .join("") +
+        `<text x="${x + 9}" y="${y + 124}" font-family="${MONO}" font-size="8" fill="${t.muted}">…${REAL.length - 3} more</text>`
+      );
+    },
+  },
 ];
 
 function render(t: Theme): string {
-  const W = 900, H = 470;
-  const colW = 276, gap = 16, x0 = 24;
+  const W = 1500, H = 492;
+  const colW = 282, gap = 12, x0 = 24;
   const p: string[] = [
     `<rect width="${W}" height="${H}" fill="${t.surface}"/>`,
     `<text x="${x0}" y="34" font-family="${FONT}" font-size="19" font-weight="600" fill="${t.ink}">Your tool definitions are a menu handed over at every request</text>`,
@@ -150,10 +217,10 @@ function render(t: Theme): string {
       `<text x="${x + 16}" y="${y + 26}" font-family="${FONT}" font-size="11" font-weight="600" fill="${t.series}" letter-spacing="0.6">${esc(panel.level.toUpperCase())}</text>`,
       `<text x="${x + 16}" y="${y + 46}" font-family="${FONT}" font-size="14" font-weight="600" fill="${t.ink}">${esc(panel.title)}</text>`,
       panel.art(x + 16, y + 62, t),
-      wrap(panel.caption, x + 16, y + 212, colW - 32, 11.5, t.ink2),
-      `<line x1="${x + 16}" y1="${y + 268}" x2="${x + colW - 16}" y2="${y + 268}" stroke="${t.rule}" stroke-width="1"/>`,
-      `<text x="${x + 16}" y="${y + 287}" font-family="${FONT}" font-size="11.5" fill="${t.muted}">${esc(panel.wire)}</text>`,
-      `<text x="${x + 16}" y="${y + 305}" font-family="${FONT}" font-size="13" font-weight="600" fill="${panel.savedTone === "good" ? t.good : t.muted}">${esc(panel.saved)}</text>`,
+      wrap(panel.caption, x + 16, y + 210, colW - 32, 11, t.ink2),
+      `<line x1="${x + 16}" y1="${y + 282}" x2="${x + colW - 16}" y2="${y + 282}" stroke="${t.rule}" stroke-width="1"/>`,
+      `<text x="${x + 16}" y="${y + 301}" font-family="${FONT}" font-size="11.5" fill="${t.muted}">${esc(panel.wire)}</text>`,
+      `<text x="${x + 16}" y="${y + 319}" font-family="${FONT}" font-size="13" font-weight="600" fill="${panel.savedTone === "good" ? t.good : t.muted}">${esc(panel.saved)}</text>`,
       // Who validates is the actual trade, so it is stated on every panel, never implied.
       //
       // Shape carries it as well as colour. scripts/validate_palette.js measures the
@@ -162,9 +229,9 @@ function render(t: Theme): string {
       // picture in the one channel some readers do not have. Circle = the provider
       // still checks; triangle = you have taken that over.
       panel.kitchenTone === "good"
-        ? `<circle cx="${x + 22}" cy="${y + 322}" r="4.5" fill="${t.good}"/>`
-        : `<path d="M${x + 22} ${y + 317} L${x + 27} ${y + 326} L${x + 17} ${y + 326} Z" fill="${t.caution}"/>`,
-      `<text x="${x + 32}" y="${y + 326}" font-family="${FONT}" font-size="11" fill="${t.ink2}">${esc(panel.kitchen)}</text>`,
+        ? `<circle cx="${x + 22}" cy="${y + 336}" r="4.5" fill="${t.good}"/>`
+        : `<path d="M${x + 22} ${y + 331} L${x + 27} ${y + 340} L${x + 17} ${y + 340} Z" fill="${t.caution}"/>`,
+      `<text x="${x + 32}" y="${y + 340}" font-family="${FONT}" font-size="11" fill="${t.ink2}">${esc(panel.kitchen)}</text>`,
     );
   });
 

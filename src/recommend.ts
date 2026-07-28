@@ -91,7 +91,7 @@ export function recommendLevel(
   // count tested, down to 5 tools (635 vs 1,178).
   //
   // So size never argues for level 1. What argues for level 1 is that it keeps the
-  // provider's own schema enforcement, which levels 2-3 give up. That is worth more
+  // provider's own schema enforcement, which levels 2, 3 and 4 give up. That is worth more
   // than a saving you would not notice — hence an absolute threshold on the block,
   // not a shape test.
   // 10,000 tokens is ~5% of a 200k window. Below that, reclaiming the block does not

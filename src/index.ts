@@ -161,7 +161,7 @@ export function compress(
   const byName = new Map(tools.map((t) => [t.name, t]));
   const originalChars = countSchemaTokensApprox(input);
 
-  // -- namespace grouping (levels 2 and 3) ----------------------------------
+  // -- namespace grouping (levels 2, 3 and 4) ------------------------------
   const groups = new Map<string, NormalizedTool[]>();
   for (const t of tools) {
     if (!groups.has(t.ns)) groups.set(t.ns, []);

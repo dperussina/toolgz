@@ -198,31 +198,56 @@
 
 <section class="wrap">
   <div class="eyebrow">How it works</div>
-  <h2>Three levels. You pick, always.</h2>
+  <h2>Five levels. You pick, always.</h2>
   <figure style="margin-top:26px">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="img/metaphor-dark.svg">
-      <img src="img/metaphor-light.svg" alt="Three panels. Level 0: the full menu, 149 tools on the wire, nothing saved, the kitchen checks the order. Level 1: the same menu with prose cut, 149 tools on the wire, 45.2% smaller, the kitchen still checks the order. Level 3: a small numbered card and one waiter, 2 tools on the wire, 96.5% smaller, toolgz checks the order instead of the provider.">
+      <img src="img/metaphor-light.svg" alt="Five panels. Level 0: the full menu, 149 tools on the wire, nothing saved, the kitchen checks the order. Level 1: the same menu with prose cut, 149 tools, 45.2% smaller, kitchen still checks. Level 2: one waiter per menu section, 64 tools, 89.3% smaller, toolgz checks. Level 3: a small numbered card and one waiter, 2 tools, 96.5% smaller, toolgz checks. Level 4: the same card annotated with what each number is good for, 2 tools, 81.6% smaller, toolgz checks.">
     </picture>
     <figcaption>Character savings. <code>recommendLevel()</code> advises by block size, not tool
     count — <code>compress(tools)</code> is level 1 whether you have 2 tools or 500.</figcaption>
   </figure>
 
-  <div class="grid2">
+  <div class="grid2 pairs">
     <div class="card">
       <h3>Level 1 — free</h3>
-      <p>Flattens each schema to a signature line and keeps native tool calling, so the
-      <b>provider still enforces your schema</b>. Measured: fewer tokens, zero malformed
-      arguments, zero extra turns, latency no worse.</p>
+      <p>One native tool each, schemas flattened, real names kept. The <b>provider still
+      enforces your schema</b>. Measured: fewer tokens, zero malformed arguments, zero extra
+      turns, latency no worse. It earns its saving by stripping prose, so on already-terse
+      descriptions it adds ~15% and <code>recommendLevel</code> tells you not to bother.</p>
+    </div>
+    <div class="card">
+      <h3>Level 2 — the escape hatch</h3>
+      <p>One compound tool per namespace, with operation names as an <code>enum</code> — so
+      <b>real op names stay visible on the raw request</b>, which level 3 hides behind codes.
+      Dominated on measurement: 4,408 prompt tokens against level 3's 2,947, and 16 malformed
+      arguments against zero, over 60 runs each. Pick it only if something downstream must
+      read those names.</p>
     </div>
     <div class="card">
       <h3>Level 3 — the 85%</h3>
-      <p>One dispatcher plus one lookup tool, and a compact map cached in your system prompt.
-      Two tools on the wire however many you start with. Costs about half an extra turn.</p>
+      <p>One dispatcher plus one lookup, and a compact map cached in your system prompt. Two
+      tools on the wire however many you start with, for about half an extra turn. Its
+      weakness is that the map is only as good as your tool names — check
+      <code>stats.ambiguousMapLines</code>.</p>
+    </div>
+    <div class="card">
+      <h3>Level 4 — when names collide</h3>
+      <p>Level 3's dispatcher, but a model compiles your corpus into minified Python first, so
+      each line says what the tool is <em>for</em>. On the real corpus that takes ambiguous map
+      lines from <b>101/149 to zero</b> — at 12,441 tokens against level 3's 2,987.
+      <b>Deliberately bigger</b>: it buys back what level 3 deletes. 180 live runs, every task
+      completed, zero hallucinated names. Needs <code>npx toolgz compile</code>.</p>
     </div>
   </div>
 
-  <div class="note"><p><b>The trade, stated plainly:</b> at levels 2–3 the model fills a generic
+  <p class="muted" style="font-size:14px"><b>Level 0</b> is a passthrough — your tools
+  unchanged — so you can A/B against an uncompressed baseline without touching anything else.
+  <code>recommendLevel()</code> returns 0, 1 or 3; it never returns 2 (dominated) or 4 (needs a
+  compiled artifact you may not have), but it tells you when your level-3 map would be all
+  lookalikes and names the fix.</p>
+
+  <div class="note"><p><b>The trade, stated plainly:</b> at levels 2, 3 and 4 the model fills a generic
   argument object, so the provider's sampler no longer enforces your schema. toolgz validates
   against your <em>original</em> schema and returns a model-readable error instead — which is why
   <code>validate</code> defaults to on. Leave it on.</p></div>
@@ -288,7 +313,7 @@
     <li><b>Below the frontier tier, argument formatting degrades at level 3.</b> On Haiku 4.5, 17 of
     30 runs produced a malformed argument — all caught by <code>validate</code> and recovered, no
     task lost, but that is the known edge.</li>
-    <li><b>It is not lossless.</b> At levels 2–3 you give up provider-side constrained decoding.
+    <li><b>It is not lossless.</b> At levels 2, 3 and 4 you give up provider-side constrained decoding.
     toolgz replaces that guarantee with its own validation. That is a trade, not a free lunch.</li>
   </ul>
   <p><a href="https://github.com/dperussina/toolgz/blob/main/docs/RESULTS.md">Every benchmark round, including the ideas that were measured and

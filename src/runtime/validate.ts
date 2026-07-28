@@ -4,7 +4,7 @@ import { nearest } from "./similar.js";
 /**
  * Validate arguments against the *original* schema before dispatch.
  *
- * This matters most at levels 2 and 3: routing calls through a generic
+ * This matters most at levels 2, 3 and 4: routing calls through a generic
  * dispatcher moves argument checking out of the provider's constrained
  * sampler and into here. Error strings are written for the model to read —
  * they name the tool, the offending parameter, and where possible the exact

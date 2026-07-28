@@ -328,37 +328,114 @@ tokens** — about 5% of a 200k window. Below that, reclaiming the block doesn't
 what fits, so keeping the provider's own argument validation is worth more than the
 saving.
 
-### The levels in full
+### All five levels
 
-Ask the library. It returns 0, 1 or 3 — never 2, and never 4 — and explains itself:
+Ask the library and it explains itself — though it only ever returns 0, 1 or 3, for
+reasons under each heading:
 
 ```ts
 import { recommendLevel } from "toolgz";
 const { level, reason } = recommendLevel(myTools);
 ```
 
-| Level | Sends | Real names | Provider schema enforcement | Use when |
-|:-:|---|:-:|:-:|---|
-| **1** | one native tool each, signature-line descriptions | yes | **yes** | **default.** Small or wide-and-sparse tool sets. Zero measured downside. |
-| 2 | one compound tool per namespace | yes | no | you need readable op names on the wire. Otherwise skip. |
-| **3** | one dispatcher + one lookup tool | codes | no | **large, deep tool sets.** The 80% number above. |
-| **4** | one dispatcher + one lookup tool | real names | no | **when level 3's map would be all lookalikes.** Needs a compiled map; see below |
+| Level | What goes on the wire | Names the model sees | Provider enforces your schema | Needs setup |
+|:-:|---|:-:|:-:|:-:|
+| 0 | your tools, unchanged | real | **yes** | — |
+| **1** | one native tool each, flattened schemas | real | **yes** | — |
+| 2 | one compound tool per namespace | real | no | — |
+| **3** | one dispatcher + one lookup | codes | no | — |
+| 4 | one dispatcher + one lookup | real | no | a compiled map |
 
-*(Level 0 is a passthrough, for A/B testing inside your own app.)*
+#### Level 0 — passthrough
 
-**Level 1 is free** — measured: fewer tokens, zero malformed arguments, zero extra turns,
-latency no worse.
+Your tools, normalised to Anthropic shape and nothing else. It exists so you can A/B
+against an uncompressed baseline inside your own app without changing any other code, and
+so `resolve()` is on the call path from day one — which makes every other level a one-line
+change later.
 
-> **One caveat on level 1, from an external reviewer.** Level 1 strips prose but keeps the
-> schema, so it retains enough to look authoritative and the model has no reason to read
+It reports **−0.6%** if you pass MCP-style `inputSchema`, because `input_schema` is one
+character longer. Structural, not waste.
+
+#### Level 1 — signature lines *(the default)*
+
+One native tool per input tool, real names kept. The JSON Schema keeps everything that
+constrains sampling — types, `enum`, `required`, array item types — and loses the prose.
+Each description becomes `name(a,b?) — first sentence`.
+
+**Nothing is given up**: the provider still enforces your schema, so a malformed argument
+is rejected by the sampler before it reaches you. Measured: fewer tokens, zero malformed
+arguments, zero extra turns, latency no worse.
+
+It earns its saving by stripping prose, so it needs prose to strip. On a real MCP
+catalogue it nets **39% in tokens**; on tools whose descriptions are already one short
+sentence it *adds* ~15%, and `recommendLevel` returns 0 rather than recommend it.
+
+> **The dangerous middle**, an external reviewer's phrase and a better one than we had.
+> Level 1 keeps the schema, so it looks authoritative and the model has no reason to read
 > further — measured at **zero `q()` lookups per task**. Level 3, forced into lookups,
 > incidentally recovers policy that lived in the prose. On their registry level 1 was
 > therefore the *worse* arm for confirmation-gated operations: 5 of 9 destructive calls
-> issued with no confirmation token against 3 of 9 at level 3. Their phrase for it is
-> **"level 1 is the dangerous middle"**, and it is a better description than anything we
-> had. If your tool descriptions carry behavioural policy, move it to the system prompt
-> before compressing at any level. **Level 2 is dominated by level 3** on every axis, including producing more
-malformed arguments; it is not a stepping stone.
+> issued with no confirmation token, against 3 of 9 at level 3. If your descriptions carry
+> behavioural policy, move it to the system prompt before compressing at any level.
+
+#### Level 2 — namespace collapse
+
+Operations fold into one compound tool per namespace: `github(op, args)` where `op` is an
+`enum` of `create_issue | search_issues | …`. The op names stay **real and visible on the
+wire**, which is the entire reason to choose it — a log, an audit trail or a policy engine
+reading the raw request still sees `create_issue`, where level 3 would show `a0`.
+
+The cost is that arguments move into a generic object, so provider-side enforcement is gone
+from here on.
+
+**It is dominated by level 3 and `recommendLevel` never returns it.** On the 420-run sweep,
+60 runs each: level 2 averaged **4,408 prompt tokens against level 3's 2,947**, and produced
+**16 malformed arguments against level 3's zero**. It is not a stepping stone between 1 and
+3 — it is a niche escape hatch for callers who need real operation names on the wire and
+will accept a worse trade to get them.
+
+#### Level 3 — dispatcher and a cached map
+
+Two tools total however many you start with: `t` to dispatch, `q` to look up. The map goes
+in your system prompt behind a cache breakpoint. **This is the level the headline numbers
+come from** — 71–85% of the prompt, 95.6% of the tool block on the real corpus.
+
+The model calls `t(f="a0", a={…})` and toolgz translates the code back. The cost is roughly
+0.3–1.7 lookups per task, about half an extra turn, plus provider-side enforcement.
+
+Its weakness is that the map is only as good as your tool names. If many of your tools
+render to the same line — `manage_table operation`, `manage_rows operation` — the name is
+the only signal left and the model picks by keyword. Check `stats.ambiguousMapLines`; if it
+is high, either `mapStyle: "signature"` or level 4.
+
+#### Level 4 — a map a model compiled for you
+
+Level 3's dispatcher with the mechanical map replaced by minified Python a model wrote from
+your corpus ahead of time, so each line says what the tool is *for*:
+
+```python
+def article_append(article_id,content):"add to end, keeping existing text; use over article_update to avoid overwriting"
+```
+
+**Deliberately larger than level 3** — it buys back the semantics level 3 deletes. On the
+149-tool corpus: 12,441 tokens against level 3's 2,987, and ambiguous map lines fall from
+**101/149 to zero**. Measured over 180 live runs: every task completed, zero hallucinated
+tool names.
+
+It needs a compiled artifact, which is why `recommendLevel` never returns it — a
+recommendation you cannot act on is not a recommendation. Generate one with
+`npx toolgz compile`, or `compileTools(tools, { complete })` with your own model client.
+
+**Pick it when level 3's map would be mostly lookalikes, and not otherwise.** On a
+catalogue whose names already discriminate, it is 4× the tokens for nothing.
+
+### How to choose, in one paragraph
+
+Start at **1** — it is free and gives up nothing. Move to **3** when the block is large
+enough that reclaiming it changes what fits, which `recommendLevel` measures for you at
+~10,000 tokens. If `stats.ambiguousMapLines` says level 3's map carries nothing but names,
+go to **4**. Use **2** only if something downstream must read real operation names off the
+raw request, and **0** to measure what any of it bought you.
 
 ### What level 3 actually looks like
 
@@ -387,7 +464,7 @@ Measured: lookups drop to zero and it was the **fastest and cheapest** arm on Op
 −17% cost). It is slightly larger, and on xAI it was worse than the default, so it is an
 option rather than the default.
 
-**The trade:** at levels 2–3 the model fills a generic argument object, so the provider's
+**The trade:** at levels 2, 3 and 4 the model fills a generic argument object, so the provider's
 sampler no longer enforces your schema. toolgz validates against your *original* schema and
 returns a model-readable error instead. That is why `validate` defaults to on — leave it on.
 
@@ -914,7 +991,7 @@ and `error` are toolgz's own tools and must be answered, not dispatched. See
 **`resolve()` returns `error: unknown parameter "x"`.**
 The model invented a parameter. Feed `r.message` back as an error tool result —
 it names the accepted parameters and the model will retry. This is expected on
-levels 2 and 3 and is exactly what validation is for.
+levels 2, 3 and 4 and is exactly what validation is for.
 
 **Lots of malformed arguments.**
 First check you have not overridden `mapStyle` away from the default
@@ -1007,7 +1084,7 @@ number can be recomputed rather than trusted.
 |---|---|---|---|
 | `level` | `0 \| 1 \| 2 \| 3 \| 4` | `1` | see [Which level to use](#which-level-to-use) |
 | `mapStyle` | `"name+required" \| "explicit" \| "signature"` | `"name+required"` | level 3 only |
-| `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–3 grouping |
+| `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–4 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `signaturePrefix` | `boolean` | `true` | level 1 only; see below |
 | `compiled` | `Record<string, string>` | — | **experimental**, required at level 4; see below |
