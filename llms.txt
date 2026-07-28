@@ -176,6 +176,21 @@ gdrive_sheets_append_rows(spreadsheet_id,range,values:array[],value_input_option
 one arm whose map omits shapes** — `mapStyle: "name+required"` — on three separate
 providers, and it also spent 0.77 lookups per run against 0.08.
 
+**If any parameter is named after a Python reserved word, recompile.** `from`, `class`,
+`return`, `in`, `is` — `from` is the common one, on email senders and date ranges.
+`def send(from=None)` is a SyntaxError, so pre-0.6.1 compiles emitted invalid Python for
+those tools and the verifier accepted it. 0.6.1 rejects it, which means on an artifact you
+have not recompiled those lines go **stale** and fall back:
+
+```
+def send_email(to,subject,attachments?:object[],**{"from":None}):"(not compiled)"
+```
+
+The signature is right and it is valid Python, but **you lose the docstring** until you
+recompile — check `stats.staleCompiledTools`, which names each one and why. Recompiling with
+0.6.1+ emits `**{"from":None}` and keeps the purpose text. If your registry has no such
+parameter, none of this applies and nothing changes.
+
 **Upgrading to 0.6.x may make your level-4 map bigger, and that is the fix working.** The
 shapes are derived at compress time, so you get full coverage with no recompile. Whether the
 wire grows or shrinks depends on your existing artifact: if its docstrings already spelled
