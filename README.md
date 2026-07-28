@@ -123,7 +123,7 @@ claim about real deployments.
 
 **All figures below are level 3** (`minified-plus`, the shipped default map style).
 Level 1 on the same sweep saves 13–32%; on the real 149-tool corpus it saves 39.2% in
-tokens; level 2 is dominated by level 3.
+tokens; level 2 is dominated by level 3 on accuracy, though not on size past ~300 tools.
 
 | Provider | Model | Tool block | Prompt tokens | Latency | Tasks |
 |---|---|---:|---:|---:|:-:|
@@ -392,12 +392,24 @@ It earns its saving by stripping prose, so it needs prose to strip. On a real MC
 catalogue it nets **39% in tokens**; on tools whose descriptions are already one short
 sentence it *adds* ~15%, and `recommendLevel` returns 0 rather than recommend it.
 
-**If you have a compiled map, pass it here too.** `compress(tools, { level: 1, compiled })`
-swaps each tool's own first sentence for the compiled docstring and takes the block from
-41,655 tokens to **35,103 — 16% smaller with provider-side enforcement completely intact**,
-because these are still ordinary native tools carrying real schemas. It is the only option
-in the library that reduces the block without giving anything up. A compiled line that no
-longer matches its schema falls back to the tool's own prose.
+**If you have a compiled map, you can pass it here too.** `compress(tools, { level: 1,
+compiled })` swaps each tool's own first sentence for the compiled docstring — a better
+*purpose* statement, at roughly the same size (+2.2% on the real corpus). Provider-side
+enforcement is untouched, because these are ordinary native tools carrying real schemas. A
+compiled line that no longer matches its schema falls back to the tool's own prose.
+
+> **This shipped in 0.5.0 claiming a 16% saving, and that claim was wrong.** The saving came
+> from dropping the signature prefix along with the prose. But level 1 strips every
+> per-property `description`, so the signature line is the **only** place the parameter
+> inventory appears — and an external team measured what removing it costs on a 60-tool
+> registry: selection accuracy fell **68.9% → 60.0%** on Opus and **57.8% → 44.4%** on Kimi,
+> and the arm that had been the only one in their whole experiment with zero malformed
+> arguments began inventing parameters that exist on no tool.
+>
+> **The 16% was the inventory.** No setting keeps both — restoring the prefix costs 2.2%
+> here and 3.9% on their registry. The prefix is therefore back **on by default**;
+> `signaturePrefix: false` still buys the 16%, with that risk now stated rather than
+> discovered.
 
 > **The dangerous middle**, an external reviewer's phrase and a better one than we had.
 > Level 1 keeps the schema, so it looks authoritative and the model has no reason to read
@@ -417,9 +429,15 @@ reading the raw request still sees `create_issue`, where level 3 would show `a0`
 The cost is that arguments move into a generic object, so provider-side enforcement is gone
 from here on.
 
-**It is dominated by level 3 and `recommendLevel` never returns it.** On the 420-run sweep,
-60 runs each: level 2 averaged **4,408 prompt tokens against level 3's 2,947**, and produced
-**16 malformed arguments against level 3's zero**. It is not a stepping stone between 1 and
+**It is dominated by level 3 on accuracy, and `recommendLevel` never returns it.** On the
+420-run sweep, 60 runs each: level 2 averaged **4,408 prompt tokens against level 3's
+2,947**, and produced **16 malformed arguments against level 3's zero**.
+
+**It is not dominated on size at scale**, which is worth knowing before you rule it out.
+Level 3's map grows one line per tool, so it is not flat either — level 2's per-namespace
+payload overtakes it somewhere between 100 and 300 tools and is roughly a third smaller by
+600. See the scale table in [docs/BEFORE-AFTER.md](docs/BEFORE-AFTER.md). Size is not the
+reason to avoid level 2; argument quality is. It is not a stepping stone between 1 and
 3 — it is a niche escape hatch for callers who need real operation names on the wire and
 will accept a worse trade to get them.
 

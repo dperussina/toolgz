@@ -88,7 +88,7 @@ already one short sentence it adds ~15% instead. Do not override a 0 without mea
 |:-:|---|:-:|:-:|---|
 | 0 | unchanged | real | yes | A/B control. Route through `resolve()` anyway so other levels are a one-line change |
 | **1** | one native tool each, flattened schemas | real | **yes** | **default.** 39% in tokens on real MCP tools; **inflates ~15% on already-terse ones** |
-| 2 | one compound tool per namespace | real | no | only when something downstream must read real op names off the raw request. 4,408 tokens vs level 3's 2,947 and 16 malformed args vs 0 over 60 runs each — dominated |
+| 2 | one compound tool per namespace | real | no | only when something downstream must read real op names off the raw request. 4,408 tokens vs level 3's 2,947 and 16 malformed args vs 0 over 60 runs each. NOT dominated on size past ~300 tools — level 3's map grows per tool and level 2 overtakes it — but argument quality is why to avoid it |
 | **3** | one dispatcher + one lookup | codes | no | **large tool sets.** 95.6% of the tool block. Weak when tool names collide — check `stats.ambiguousMapLines` |
 | **4** | one dispatcher + one lookup | real names | no | when level 3's map is mostly lookalikes. Bigger than 3 on purpose; needs `compiled` |
 
@@ -105,7 +105,8 @@ The switch is the **size** of the level-1 block, not the tool count — threshol
 tokens (~5% of a 200k window). A tool is 20 to 460 tokens depending on schema verbosity,
 so 40 real MCP tools cross it while 72 one-parameter tools do not.
 
-Level 2 is dominated by level 3 on accuracy (six times the malformed arguments) and is
+Level 2 is dominated by level 3 on accuracy — 16 malformed arguments against zero over 60
+runs each — and is
 never recommended. It stays in the API for callers who need real operation names.
 
 ## Before shipping level 3, check the map is not all lookalikes
@@ -171,10 +172,14 @@ cannot enforce a schema it was not sent, and not sending it is the compression.
   `f` to an enum of tool names is legal but was measured and removed: +47% to +70% of the
   level-3 map, zero hallucinated names prevented across 192 runs, and it caused grok-4.5 to
   answer with no tool call and no error — twice.
-- **If you need real enforcement, use level 1 with a compiled map.** Native tools, real
-  schemas, provider enforcing everything, and the compiled docstring in place of each
-  tool's prose: 41,655 tokens to 35,103 on the real corpus. `compress(tools, { level: 1,
-  compiled })`.
+- **If you need real enforcement, use level 1** — with or without a compiled map. Native
+  tools, real schemas, provider enforcing everything. `compress(tools, { level: 1, compiled })`
+  swaps each tool's prose for the compiled docstring at about the same size (+2.2%).
+- **Do not set `signaturePrefix: false` to shrink level 1 unless you have measured it.** It
+  buys ~16% by removing the only place the parameter inventory appears in prose — level 1
+  strips per-property descriptions. Measured on one real registry: selection accuracy fell
+  68.9% -> 60.0% on Opus, 57.8% -> 44.4% on Kimi, and a previously clean arm started
+  inventing parameters. The saving IS the inventory.
 
 ## Two hard facts about level 3
 

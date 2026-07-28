@@ -132,6 +132,9 @@ async function main() {
       `${result.stats.chars} chars (${result.stats.charsPerTool}/tool)`,
   );
   for (const r of result.rejected) console.error(`  REJECTED ${r.name}: ${r.reason}`);
+  for (const i of result.incompleteSignatures) {
+    console.error(`  CHECK ${i.name}: compiled signature omits ${i.omitted}`);
+  }
   for (const d of result.danglingReferences) {
     console.error(`  CHECK ${d.name}: docstring points at "${d.mentions}", not in this corpus`);
   }

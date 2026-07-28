@@ -15,7 +15,7 @@
  * contract lived in description prose, which every level above 0 strips.
  */
 import { describe, it, expect } from "vitest";
-import { compress } from "../src/index.js";
+import { compileTools, compress } from "../src/index.js";
 import type { Tool } from "../src/types.js";
 
 /** Their shape: compound tools, one required `operation`, names the only discriminator. */
@@ -326,29 +326,63 @@ describe("compiled descriptions at level 1, and name enforcement on the dispatch
     article_append: `def article_append(article_id,content):"add to end; use over article_update"`,
   };
 
-  it("level 1 uses the compiled docstring and keeps the real schema", () => {
-    const wire = compress(tools, { level: 1, compiled }).tools as any[];
-    const t = wire.find((w) => w.name === "article_append");
-    expect(t.description).toBe("add to end; use over article_update");
-    // The whole point: enforcement survives because this is still a native tool.
+  it("level 1 keeps BOTH the parameter inventory and the compiled docstring", () => {
+    /**
+     * This assertion is the reverse of what it was in 0.5.0, and the reversal is the point.
+     *
+     * The original shipped the docstring alone, which saved 16% — until an external team
+     * measured what that costs. Level 1 strips every per-property `description`, so the
+     * signature line is the only place the parameter inventory appears in prose. Removing
+     * it took their selection accuracy from 68.9% to 60.0% on Opus and 57.8% to 44.4% on
+     * Kimi, and made a previously clean arm invent parameters that exist on no tool.
+     */
+    const t = (compress(tools, { level: 1, compiled }).tools as any[]).find((w) => w.name === "article_append");
+    expect(t.description, "the interface statement").toMatch(/^article_append\(/);
+    expect(t.description, "the purpose statement").toContain("add to end; use over article_update");
+    // Enforcement is the other half, and it never moved.
     expect(t.input_schema.properties).toHaveProperty("content");
     expect(t.input_schema.required).toEqual(["article_id", "content"]);
   });
 
-  it("is smaller than level 1 without it", () => {
-    const plain = compress(tools, { level: 1 }).stats.compressedChars;
-    const withMap = compress(tools, { level: 1, compiled }).stats.compressedChars;
-    expect(withMap).toBeLessThan(plain);
+  it("the saving is available, but only by dropping the inventory", () => {
+    /**
+     * The invariant, stated at the right level of generality. A first draft asserted that
+     * keeping the prefix costs at least as much as plain level 1 — true on the real corpus
+     * (+2.2%) and false here, because these two fixtures have compiled docstrings shorter
+     * than their own descriptions. Whether compiled beats plain depends on your prose;
+     * whether dropping the prefix removes the parameter inventory does not.
+     */
+    const kept = compress(tools, { level: 1, compiled }).stats.compressedChars;
+    const dropped = compress(tools, { level: 1, compiled, signaturePrefix: false }).stats.compressedChars;
+    expect(dropped, "the saving comes from removing the signature").toBeLessThan(kept);
+
+    const withPrefix = (compress(tools, { level: 1, compiled }).tools as any[])[0].description;
+    const without = (compress(tools, { level: 1, compiled, signaturePrefix: false }).tools as any[])[0].description;
+    expect(withPrefix).toMatch(/^article_\w+\(/);
+    expect(without, "and what it removes is the only prose statement of the interface")
+      .not.toMatch(/^article_\w+\(/);
   });
 
-  it("does not prepend a signature to a compiled line", () => {
-    // The first attempt did, and made level 1 LARGER than not compiling at all
-    // (91,546 chars against 89,574) — the parameters are already in the schema.
-    const t = (compress(tools, { level: 1, compiled }).tools as any[])[0];
-    expect(t.description).not.toMatch(/^article_\w+\(/);
-    // Still available if asked for.
-    const forced = (compress(tools, { level: 1, compiled, signaturePrefix: true }).tools as any[])[0];
-    expect(forced.description).toMatch(/^article_\w+\(/);
+  it("reports a compiled signature that omits parameters the tool has", async () => {
+    // verifyCompiledLine refuses an INVENTED parameter and a dropped REQUIRED one, but
+    // permits dropping optional ones — so a line describing one of seven parameters passes
+    // and still under-describes. Zero on our corpus; nothing was enforcing it.
+    // Must be an OPTIONAL parameter: dropping a required one is already refused outright,
+    // which is exactly why the gap existed — the permitted case was the unchecked one.
+    const withOptional: Tool[] = [{
+      name: "kb_search",
+      description: "Search the knowledge base.",
+      inputSchema: {
+        type: "object",
+        properties: { q: { type: "string" }, limit: { type: "integer" }, status: { type: "string" } },
+        required: ["q"],
+      },
+    }];
+    const r = await compileTools(withOptional, {
+      complete: async () => `def kb_search(q):"find articles by query"`,
+    });
+    expect(r.rejected, "dropping optional parameters is permitted").toEqual([]);
+    expect(r.incompleteSignatures).toEqual([{ name: "kb_search", omitted: "limit, status" }]);
   });
 
   it("falls back to the tool's own prose when a compiled line is stale", () => {

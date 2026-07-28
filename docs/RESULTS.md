@@ -885,7 +885,7 @@ Worth being precise about where the saving comes from: the tool *name* is
 about 5 tokens. The JSON Schema envelope — per-property `description` strings,
 `additionalProperties`, `$schema` — is the other 400.
 
-### 3. Level 2 is dominated and should not be used
+### 3. Level 2 is dominated on accuracy and should not be used for that reason
 
 `hybrid` lost to `minified` on every axis:
 

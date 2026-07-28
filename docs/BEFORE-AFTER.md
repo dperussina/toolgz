@@ -647,16 +647,27 @@ anything else:
 
 ## Scale
 
-Three tools is a demo. The saving grows with the tool count, because the
-level-3 wire payload is two tools no matter how many you start with:
+Three tools is a demo, and the shape changes with scale in a way worth seeing.
+Level 3 sends two tools no matter how many you start with — but its **map** grows
+one line per tool, so level 3 is not flat either. Level 2's per-namespace payload
+grows more slowly, and **overtakes level 3 somewhere between 100 and 300 tools**:
 
-| tools | level 0 | level 1 | level 2 | level 3 | wire tools at L3 |
+| tools | level 0 | level 1 | level 2 | level 3 | wire tools at L3+ |
 |---:|---:|---:|---:|---:|---:|
 | 3 | 1,807 | 1,007 | 948 | 688 | 2 |
 | 10 | 6,178 | 3,388 | 2,395 | 853 | 2 |
 | 30 | 18,081 | 10,101 | 2,555 | 1,320 | 2 |
 | 100 | 60,448 | 33,748 | 3,115 | 2,993 | 2 |
 | 300 | 181,091 | 101,581 | 4,915 | 8,120 | 2 |
+| 600 | 362,291 | 203,381 | 7,615 | 15,820 | 2 |
+
+**Level 2 is smaller than level 3 past ~300 tools**, and the gap widens — by 600
+tools it is roughly a third smaller. That is a real crossover and it is not a
+reason to switch by itself: level 2 measured 16 malformed arguments against level
+3's zero over 60 runs each (RESULTS.md Round 1-6), so it buys size with argument
+quality. Level 4 is omitted from this table because it needs a compiled map, which
+is generated per corpus rather than synthesised here; see its section above for the
+three-tool figure and RESULTS.md Round 10 for the measured comparison.
 
 Figures are characters of rendered payload (tools + preamble), which is a
 shape argument rather than a billing one — token counts above come from the

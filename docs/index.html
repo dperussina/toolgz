@@ -247,11 +247,12 @@
   compiled artifact you may not have), but it tells you when your level-3 map would be all
   lookalikes and names the fix.</p>
 
-  <div class="note" style="border-left-color:var(--accent)"><p><b>Want the compression and
-  the enforcement?</b> Pass a compiled map to <em>level 1</em>:
-  <code>compress(tools, { level: 1, compiled })</code>. The docstring replaces each tool's
-  prose while the real schema still goes on the wire, so the provider keeps enforcing
-  arguments — 41,655 tokens down to <b>35,103</b>, and nothing given up. A dispatcher cannot have provider
+  <div class="note" style="border-left-color:var(--accent)"><p><b>Want enforcement?</b> Use <em>level 1</em>. A compiled map works here too —
+  <code>compress(tools, { level: 1, compiled })</code> swaps each tool's prose for the
+  compiled docstring at about the same size, with the real schema still on the wire. An
+  earlier version of this page claimed it also saved 16%; it did, by dropping the parameter
+  list, and an external team measured that costing 9–13 points of selection accuracy. The
+  saving was the parameter list. A dispatcher cannot have provider
   enforcement at all: argument checking would need a discriminated union the API rejects,
   and constraining the function name was measured and removed — it cost up to 70% of the
   level-3 map and caused the only two task failures in a 192-run sweep.</p></div>

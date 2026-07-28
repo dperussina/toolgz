@@ -56,6 +56,19 @@ export type CompileResult = {
    * false positive costs more than it saves. Review these before shipping a map.
    */
   danglingReferences: { name: string; mentions: string }[];
+  /**
+   * Compiled lines whose parameter list omits parameters the tool actually has.
+   *
+   * `verifyCompiledLine` refuses an *invented* parameter and a *dropped required* one, but
+   * it permits dropping optional ones — so a docstring describing one of seven parameters
+   * passes verification and still under-describes the interface. Reported by an external
+   * team after exactly that degraded selection on their registry.
+   *
+   * Zero on our 149-tool corpus, which is the point: the compiler follows the prompt, and
+   * nothing was enforcing it. Advisory, because a deliberately partial signature is a
+   * legitimate choice for a tool with thirty optional parameters.
+   */
+  incompleteSignatures: { name: string; omitted: string }[];
   stats: { total: number; compiled: number; chars: number; charsPerTool: number };
 };
 
@@ -209,12 +222,26 @@ export async function compileTools(
     if (hits.size) danglingReferences.push({ name, mentions: [...hits].join(", ") });
   }
 
+  const incompleteSignatures: { name: string; omitted: string }[] = [];
+  for (const [name, line] of Object.entries(compiled)) {
+    const t = corpus.find((c) => c.name === name);
+    if (!t) continue;
+    const declared = line
+      .slice(line.indexOf("(") + 1, line.indexOf('):"'))
+      .split(",")
+      .map((p) => p.trim().split("=")[0].trim())
+      .filter(Boolean);
+    const omitted = Object.keys(t.schema.properties ?? {}).filter((p) => !declared.includes(p));
+    if (omitted.length) incompleteSignatures.push({ name, omitted: omitted.join(", ") });
+  }
+
   const chars = Object.values(compiled).join("\n").length;
   const count = Object.keys(compiled).length;
   return {
     compiled,
     rejected: [...reasons].map(([name, reason]) => ({ name, reason })),
     danglingReferences,
+    incompleteSignatures,
     stats: {
       total: corpus.length,
       compiled: count,

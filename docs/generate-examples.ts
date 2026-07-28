@@ -334,17 +334,19 @@ async function main() {
     "",
     "## Scale",
     "",
-    "Three tools is a demo. The saving grows with the tool count, because the",
-    "level-3 wire payload is two tools no matter how many you start with:",
+    "Three tools is a demo, and the shape changes with scale in a way worth seeing.",
+    "Level 3 sends two tools no matter how many you start with — but its **map** grows",
+    "one line per tool, so level 3 is not flat either. Level 2's per-namespace payload",
+    "grows more slowly, and **overtakes level 3 somewhere between 100 and 300 tools**:",
     "",
   );
 
   // Character-count scaling table (no API calls — this is a shape argument).
   const rows: string[] = [
-    "| tools | level 0 | level 1 | level 2 | level 3 | wire tools at L3 |",
+    "| tools | level 0 | level 1 | level 2 | level 3 | wire tools at L3+ |",
     "|---:|---:|---:|---:|---:|---:|",
   ];
-  for (const n of [3, 10, 30, 100, 300]) {
+  for (const n of [3, 10, 30, 100, 300, 600]) {
     const many: Tool[] = Array.from({ length: n }, (_, i) => ({
       ...DEMO_TOOLS[i % DEMO_TOOLS.length],
       name: `ns${i % 9}_op_${i}`,
@@ -359,6 +361,14 @@ async function main() {
   }
   out.push(
     ...rows,
+    "",
+    "**Level 2 is smaller than level 3 past ~300 tools**, and the gap widens — by 600",
+    "tools it is roughly a third smaller. That is a real crossover and it is not a",
+    "reason to switch by itself: level 2 measured 16 malformed arguments against level",
+    "3's zero over 60 runs each (RESULTS.md Round 1-6), so it buys size with argument",
+    "quality. Level 4 is omitted from this table because it needs a compiled map, which",
+    "is generated per corpus rather than synthesised here; see its section above for the",
+    "three-tool figure and RESULTS.md Round 10 for the measured comparison.",
     "",
     "Figures are characters of rendered payload (tools + preamble), which is a",
     "shape argument rather than a billing one — token counts above come from the",

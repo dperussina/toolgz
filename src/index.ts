@@ -342,11 +342,27 @@ export function compress(
         ? line!.slice(line!.indexOf('):"') + 3, -1)
         : firstSentence(t.description);
 
-      // A compiled docstring gets no signature prefix unless one is asked for. The
-      // parameters are already in the schema below it, and prepending them alongside a
-      // written description is pure duplication — measured: doing so made level 1
-      // *larger* than not compiling at all (91,546 chars against 89,574).
-      const prefix = options.signaturePrefix ?? !useCompiled;
+      /**
+       * The signature prefix stays ON with a compiled line, and this default was reversed
+       * after measurement contradicted the reasoning behind it.
+       *
+       * The argument for dropping it was that the parameters are already in the schema
+       * below, so prepending them duplicates. True on bytes: dropping it took level 1 from
+       * 89,574 characters to 75,004, a 16% saving.
+       *
+       * But level 1 strips every per-property `description`, so the signature line is the
+       * ONLY place the parameter inventory appears in prose. An external team measured what
+       * that costs on a 60-tool registry: selection accuracy fell 68.9% -> 60.0% on Opus and
+       * 57.8% -> 44.4% on Kimi, and the arm that had been the only one in their entire
+       * experiment with zero malformed arguments started inventing parameters that exist on
+       * no tool.
+       *
+       * The 16% saving *was* the inventory. There is no setting that keeps both — restoring
+       * the prefix costs 2.2% against plain level 1 on our corpus, 3.9% on theirs. So the
+       * default keeps the guarantee, and `signaturePrefix: false` is available for anyone
+       * who wants the saving with that risk stated.
+       */
+      const prefix = options.signaturePrefix ?? true;
 
       // With no description the signature is the only content there is, so it stays
       // regardless — an empty description would leave the model nothing to read.
