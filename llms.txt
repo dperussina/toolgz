@@ -176,6 +176,14 @@ gdrive_sheets_append_rows(spreadsheet_id,range,values:array[],value_input_option
 one arm whose map omits shapes** — `mapStyle: "name+required"` — on three separate
 providers, and it also spent 0.77 lookups per run against 0.08.
 
+**Upgrading to 0.6.x may make your level-4 map bigger, and that is the fix working.** The
+shapes are derived at compress time, so you get full coverage with no recompile. Whether the
+wire grows or shrinks depends on your existing artifact: if its docstrings already spelled
+shapes out in prose, recompiling removes the duplication and the map shrinks (−19% here); if
+they did not, deriving adds shapes the map never had and it grows (+14.7% on one external
+catalogue). Recompile either way — it is the only way to stop paying for prose that is now
+redundant.
+
 **If your tools take objects or arrays, do not use `mapStyle: "name+required"` at level 3.**
 Use `"signature"`, or level 4. And do not write shapes into a compiled docstring: the
 signature is regenerated from the schema, so restating them wastes characters that should

@@ -1013,9 +1013,43 @@ compile prompt now forbids it:
 depends on the model. Verified over 96 further runs: **zero malformed arguments, zero
 rejections, 96/96 tasks.**
 
+> **The size effect does not generalize, and this write-up first stated it as if it did.**
+> The external team measured the opposite direction on their catalogue: level 4's wire went
+> **+14.7%** (6,309 → 7,239 tokens) where ours went down. Both are correct, and the reason is
+> what the *old* compile happened to write. Ours spelled shapes into the docstrings, so
+> deriving them made the prose redundant and removing it more than paid for the signature.
+> Theirs named 0 of 52 arrays and 0 of 39 objects, so there was no duplication to remove and
+> deriving adds all of it. **Coverage goes to 100% either way; the byte direction depends on
+> your artifact.** On theirs, level 4 went from 14% dearer than level 3 with `signature` to
+> 29% dearer — which strengthens the same verdict rather than changing it.
+>
+> They also falsified their own §13 prediction, that level 4 would become strictly better
+> than level 3 once docstrings carried shapes. At n=45 on Opus it did not: 64.4% against
+> 71.1%, for 1,639 more tokens, with every level-4 miss inside one confusable cluster. Three
+> tasks at n=45 settles nothing on its own, but it does not support the prediction either.
+> Their Kimi arm is the strongest result in the round: **15 malformed arguments to zero**, on
+> a corpus that — unlike ours — had a failing baseline to improve.
+
 ```
 def analyze_consolidation(shipments:[],truckSpecs:{}):"group shipments by destination to find truck-fill consolidation opportunities"
 ```
+
+### A defect the round exposed by accident
+
+Inspecting the artifact 0.6.0 shipped showed **148 of 149 tools**. The missing one was not a
+model failure: `from` is a Python reserved word, so `def send(from=None)` is a SyntaxError,
+and the only legal spelling is a trailing `**{"from":None}`. The old compile wrote the
+SyntaxError and the verifier **accepted** it; the new compile wrote the correct form and the
+verifier **rejected** it as an invented parameter. Three tools in the corpus have such a
+parameter, all email senders, and `from`/`to` date ranges make this ordinary in real
+catalogues.
+
+Fixed in 0.6.1: level 4 renders keyword-named parameters as `**{"from":None}` (`...` if
+required) keeping the wire name exactly, one parser replaces the three that each read
+`**{…}` as zero parameters, and the verifier now rejects the invalid form and names the fix.
+The corpus compiles **149/149** for the first time. Old artifacts need no action — the bad
+lines fail verification and degrade to a derived signature, which is what
+`stats.staleCompiledTools` is for.
 
 ### The verdict does not move
 
