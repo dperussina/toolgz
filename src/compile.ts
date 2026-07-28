@@ -13,7 +13,7 @@
  * it is accepted, and anything that fails is discarded rather than shipped.
  */
 import type { Tool } from "./types.js";
-import { normalize, defaultNamespaceOf } from "./render/index.js";
+import { normalize, defaultNamespaceOf, isPythonIdentifier } from "./render/index.js";
 
 /**
  * Bring your own model. Return the assistant's text; throw to abort compilation.
@@ -98,6 +98,11 @@ Rules, all mandatory:
 - <params> are the real parameter names. Required ones first and bare; optional ones as
   name=None. Never invent, rename, drop or reorder a required parameter. Use None and
   never 0 — a numeric default tells the reader the parameter is a number.
+- If a parameter name is a Python reserved word — \`from\`, \`class\`, \`import\`, \`return\`,
+  \`in\`, \`is\`, \`not\`, \`lambda\`, \`global\`, \`pass\` — it CANNOT be written as a parameter;
+  \`def send(from=None)\` is a SyntaxError. Put it last as \`**{"from":None}\`, or
+  \`**{"from":...}\` if it is required. Keep the name exactly as the schema spells it: never
+  \`from_\`, never \`sender\`. The name is what gets sent on the wire.
 - The docstring is the whole point. In as few characters as possible say WHAT it does and
   WHEN to reach for it instead of a similarly-named tool. Drop articles, drop pleasantries,
   drop restating the name. No period at the end.
@@ -136,6 +141,28 @@ export function describeForCompile(t: Normalized): string {
 }
 
 /**
+ * Parameter names a compiled line declares, in either spelling.
+ *
+ * There is one parser because there were three, and all three shared a blind spot:
+ * `**{"from":None}` — the only way Python can express a parameter named after a reserved
+ * word — read as zero parameters. That made the verifier call a correct line invented, and
+ * made `incompleteSignatures` report `omits from` on three lines that declared it perfectly.
+ *
+ * Returns positional and keyword names separately because the caller needs the distinction:
+ * a reserved word among the *positional* names is a SyntaxError, not a naming choice.
+ */
+export function declaredParameters(params: string): { positional: string[]; kwargs: string[] } {
+  return {
+    positional: params
+      .replace(/\*\*\{[^}]*\}/g, "")
+      .split(",")
+      .map((p) => p.trim().split("=")[0].trim())
+      .filter(Boolean),
+    kwargs: [...params.matchAll(/"([^"]+)"\s*:/g)].map((k) => k[1]),
+  };
+}
+
+/**
  * Reject anything that would misrepresent the tool.
  *
  * Returns null when the line is safe to ship, or a human-readable reason. Exported so a
@@ -151,10 +178,26 @@ export function verifyCompiledLine(line: string, tool: Tool | Normalized): strin
   if (!m) return "not a single-line def";
   if (m[1] !== tool.name) return `renamed the tool to ${m[1]}`;
 
-  const emitted = m[2]
-    .split(",")
-    .map((p) => p.trim().split("=")[0].trim())
-    .filter(Boolean);
+  /**
+   * A parameter named `from` cannot be positional — `def send(from=None)` is a SyntaxError,
+   * and Python has no way to spell it other than a trailing `**{"from": ...}`. So both forms
+   * have to be read here, and the invalid one has to be caught.
+   *
+   * This was found by inspecting a shipped artifact. The old compile wrote `from=None` for
+   * three email tools and the verifier passed it — invalid Python, shipped. A later compile
+   * wrote the correct `**{"from":None}` and the verifier rejected it as an invented
+   * parameter, leaving the tool uncompiled. Accepting invalid syntax while rejecting valid
+   * syntax is the worst of both, so keyword parameters are now understood in both places.
+   */
+  const { positional, kwargs: kwargNames } = declaredParameters(m[2]);
+  const emitted = [...positional, ...kwargNames];
+
+  const keywordAsPositional = positional.filter((p) => !isPythonIdentifier(p));
+  if (keywordAsPositional.length)
+    return `not valid Python: ${keywordAsPositional.join(", ")} ${
+      keywordAsPositional.length === 1 ? "is a reserved word" : "are reserved words"
+    } and cannot be a parameter name — put it in a trailing **{"${keywordAsPositional[0]}":None} instead`;
+
   const invented = emitted.filter((p) => !real.has(p));
   if (invented.length) return `invented parameter(s): ${invented.join(", ")}`;
   const missing = required.filter((p) => !emitted.includes(p));
@@ -245,11 +288,10 @@ export async function compileTools(
   for (const [name, line] of Object.entries(compiled)) {
     const t = corpus.find((c) => c.name === name);
     if (!t) continue;
-    const declared = line
-      .slice(line.indexOf("(") + 1, line.indexOf('):"'))
-      .split(",")
-      .map((p) => p.trim().split("=")[0].trim())
-      .filter(Boolean);
+    const { positional, kwargs } = declaredParameters(
+      line.slice(line.indexOf("(") + 1, line.indexOf('):"')),
+    );
+    const declared = [...positional, ...kwargs];
     const omitted = Object.keys(t.schema.properties ?? {}).filter((p) => !declared.includes(p));
     if (omitted.length) incompleteSignatures.push({ name, omitted: omitted.join(", ") });
   }

@@ -502,7 +502,7 @@ export function compress(
          * prompt could not make it. Deriving the signature makes it 100% by construction
          * and costs nothing at run time.
          */
-        return `def ${signatureLine(t)}:"${line.slice(line.indexOf('):"') + 3, -1)}"`;
+        return `def ${signatureLine(t, undefined, { python: true })}:"${line.slice(line.indexOf('):"') + 3, -1)}"`;
       }
       if (problem) stale.push(`${t.name}: ${problem}`);
       // Emit something correct rather than omitting the tool, and make the mixture
@@ -515,7 +515,7 @@ export function compress(
       // an array. Shape-blind lines are the measured cause of container-type rejections, so
       // the degraded path must not reintroduce the exact defect the map exists to avoid.
       uncompiled++;
-      return `def ${signatureLine(t)}:"(not compiled)"`;
+      return `def ${signatureLine(t, undefined, { python: true })}:"(not compiled)"`;
     }
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
     if (req.length) return `${code} ${t.name} ${req.join(",")}`;

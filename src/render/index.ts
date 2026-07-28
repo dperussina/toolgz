@@ -70,7 +70,11 @@ function flattenProperty(p: any): any {
  *
  * A model reads this natively. A 400-token JSON Schema becomes one line.
  */
-export function signatureLine(tool: Tool | NormalizedTool, nameOverride?: string): string {
+export function signatureLine(
+  tool: Tool | NormalizedTool,
+  nameOverride?: string,
+  options: { python?: boolean } = {},
+): string {
   const schema =
     (tool as NormalizedTool).schema ??
     (tool as Tool).inputSchema ??
@@ -78,27 +82,62 @@ export function signatureLine(tool: Tool | NormalizedTool, nameOverride?: string
     {};
   const props = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
-  const parts = Object.entries(props).map(([key, raw]) => {
-    const v = raw as any;
-    const opt = required.has(key) ? "" : "?";
-    /**
-     * Shape, derived — never guessed.
-     *
-     * An external team measured every argument rejection at level 4 across two providers:
-     * 77% were container-type errors and 23% bad enum values, with nothing else. The model
-     * was being asked to reproduce, in prose, information the schema already carries — and
-     * on 33 object parameters this renderer was emitting a bare name, so there was nothing
-     * to reproduce it from.
-     *
-     * `{}` and `[]` cost two characters and remove the guess entirely.
-     */
-    let hint = "";
-    if (v?.enum) hint = `:${v.enum.join("|")}`;
-    else if (v?.type === "array") hint = `:${v.items?.type ?? (v.items?.properties ? "{}" : "")}[]`;
-    else if (v?.type === "object") hint = ":{}";
-    return `${key}${opt}${hint}`;
+  /**
+   * Level 4 promises valid Python; levels 1 and 3 promise a signature a model can read.
+   * Only the former has to care that `from` is a keyword, so only it asks for this.
+   */
+  const kwargs: string[] = [];
+  const parts = Object.entries(props).flatMap(([key, raw]) => {
+    if (options.python && !isPythonIdentifier(key)) {
+      // `def send(from=None)` is a SyntaxError, so a parameter whose name is a Python
+      // keyword cannot be positional. It goes in a trailing `**{...}` instead, which is
+      // valid Python and — crucially — keeps the wire name exactly as the schema spells
+      // it. Renaming it to `from_` would compile and then send the wrong key.
+      //
+      // `...` for required, `None` for optional, matching the meaning of `=None` above.
+      kwargs.push(`"${key}":${required.has(key) ? "..." : "None"}`);
+      return [];
+    }
+    return [renderParam(key, raw, required.has(key))];
   });
+  if (kwargs.length) parts.push(`**{${kwargs.join(",")}}`);
   return `${nameOverride ?? tool.name}(${parts.join(",")})`;
+}
+
+/**
+ * Python's reserved words, plus the identifier rule. A schema is free to name a parameter
+ * `from` or `class` — JSON has no keywords — and real ones do: `from` appears on three
+ * tools in the 149-tool corpus, all of them email senders.
+ */
+const PYTHON_KEYWORDS = new Set(
+  ("False None True and as assert async await break class continue def del elif else except " +
+    "finally for from global if import in is lambda nonlocal not or pass raise return try " +
+    "while with yield match case").split(" "),
+);
+
+export function isPythonIdentifier(name: string): boolean {
+  return /^[A-Za-z_]\w*$/.test(name) && !PYTHON_KEYWORDS.has(name);
+}
+
+/**
+ * One parameter: name, `?` if optional, and its shape.
+ *
+ * Shape is derived — never guessed. An external team measured every argument rejection at
+ * level 4 across two providers: 77% were container-type errors and 23% bad enum values,
+ * with nothing else. The model was being asked to reproduce, in prose, information the
+ * schema already carries — and on 33 object parameters this renderer emitted a bare name,
+ * so there was nothing to reproduce it from.
+ *
+ * `{}` and `[]` cost two characters and remove the guess entirely.
+ */
+function renderParam(key: string, raw: unknown, isRequired: boolean): string {
+  const v = raw as any;
+  const opt = isRequired ? "" : "?";
+  let hint = "";
+  if (v?.enum) hint = `:${v.enum.join("|")}`;
+  else if (v?.type === "array") hint = `:${v.items?.type ?? (v.items?.properties ? "{}" : "")}[]`;
+  else if (v?.type === "object") hint = ":{}";
+  return `${key}${opt}${hint}`;
 }
 
 /**
