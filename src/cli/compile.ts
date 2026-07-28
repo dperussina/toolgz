@@ -132,6 +132,16 @@ async function main() {
       `${result.stats.chars} chars (${result.stats.charsPerTool}/tool)`,
   );
   for (const r of result.rejected) console.error(`  REJECTED ${r.name}: ${r.reason}`);
+  if (result.docstringNamesNoParameter.length) {
+    // Expected, and not a warning by default: the prompt now tells the model NOT to
+    // restate the interface, because the signature is derived from the schema at both
+    // level 1 and level 4. It only matters if you set `signaturePrefix: false`, which is
+    // the one path where the docstring is all the caller sees.
+    console.error(
+      `  ${result.docstringNamesNoParameter.length} docstring(s) name no parameter — expected,` +
+        ` since the signature is derived. Only a problem if you set signaturePrefix: false.`,
+    );
+  }
   for (const i of result.incompleteSignatures) {
     console.error(`  CHECK ${i.name}: compiled signature omits ${i.omitted}`);
   }

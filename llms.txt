@@ -161,6 +161,26 @@ Or `npx toolgz compile --tools ./tools.json --out ./toolmap.json`.
 - **What it cannot do:** check whether a docstring is *true*. Verification covers the
   contract, not the claim.
 
+## Parameter shapes are derived, not guessed
+
+Every level that renders a signature — 1, 3 with `mapStyle: "signature"`, and 4 — shows
+container shapes taken from your schema:
+
+```
+analyze_consolidation(shipments:[],truckSpecs:{})
+gdrive_sheets_append_rows(spreadsheet_id,range,values:array[],value_input_option?:RAW|USER_ENTERED)
+```
+
+`k:a|b|c` for an enum, `k:[]` for an array, `k:{}` for an object. This is not cosmetic: over
+144 runs on a suite built to test argument shape, **every malformed argument landed on the
+one arm whose map omits shapes** — `mapStyle: "name+required"` — on three separate
+providers, and it also spent 0.77 lookups per run against 0.08.
+
+**If your tools take objects or arrays, do not use `mapStyle: "name+required"` at level 3.**
+Use `"signature"`, or level 4. And do not write shapes into a compiled docstring: the
+signature is regenerated from the schema, so restating them wastes characters that should
+carry purpose.
+
 ## Enforcement: what a dispatcher can and cannot have
 
 Levels 2, 3 and 4 give up provider-side argument checking. That is structural — the sampler
@@ -295,7 +315,7 @@ is safe to ship or a reason when it is not. Use the second if you compile your o
 it is what refuses a renamed tool, an invented parameter or a dropped required one.
 
 `signaturePrefix` (level 1, default true) controls the `name(a,b?) — ` prefix on each
-description. Setting it false makes level 1 smaller — 45.2% → 55.3% in characters on real MCP tools —
+description. Setting it false makes level 1 smaller — 45.1% → 55.3% in characters on real MCP tools —
 and measured cheaper on Gemini, OpenAI and xAI over 64 runs. On `claude-opus-5` it was
 **+3.8% dearer** because turns rose 3.88 → 4.63. Safe either way (zero malformed
 arguments on both arms); not universally cheaper. Do not set it without measuring your

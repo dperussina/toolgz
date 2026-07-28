@@ -81,9 +81,21 @@ export function signatureLine(tool: Tool | NormalizedTool, nameOverride?: string
   const parts = Object.entries(props).map(([key, raw]) => {
     const v = raw as any;
     const opt = required.has(key) ? "" : "?";
+    /**
+     * Shape, derived — never guessed.
+     *
+     * An external team measured every argument rejection at level 4 across two providers:
+     * 77% were container-type errors and 23% bad enum values, with nothing else. The model
+     * was being asked to reproduce, in prose, information the schema already carries — and
+     * on 33 object parameters this renderer was emitting a bare name, so there was nothing
+     * to reproduce it from.
+     *
+     * `{}` and `[]` cost two characters and remove the guess entirely.
+     */
     let hint = "";
     if (v?.enum) hint = `:${v.enum.join("|")}`;
-    else if (v?.type === "array" && v.items?.type) hint = `:${v.items.type}[]`;
+    else if (v?.type === "array") hint = `:${v.items?.type ?? (v.items?.properties ? "{}" : "")}[]`;
+    else if (v?.type === "object") hint = ":{}";
     return `${key}${opt}${hint}`;
   });
   return `${nameOverride ?? tool.name}(${parts.join(",")})`;

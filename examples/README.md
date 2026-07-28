@@ -80,7 +80,7 @@ tools committed in `bench/fixtures`, harvested from 14 live MCP servers:
 
 ```
   level 0: 149 tools on the wire, 163520 chars, savedPct -0.1%
-  level 1: 149 tools on the wire,  89574 chars, savedPct 45.2%
+  level 1: 149 tools on the wire,  89574 chars, savedPct 45.1%
   level 2:  64 tools on the wire,  17443 chars, savedPct 89.3%
   level 3:   2 tools on the wire,   5721 chars, savedPct 96.5%
 ```

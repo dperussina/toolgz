@@ -490,12 +490,32 @@ export function compress(
       // which is worse than showing it nothing — this is how staleness is caught without
       // any fingerprint bookkeeping, because the schema itself is the fingerprint.
       const problem = line ? verifyCompiledLine(line, t) : null;
-      if (line && !problem) return line;
+      if (line && !problem) {
+        /**
+         * The signature is regenerated from the schema; only the docstring is the model's.
+         *
+         * Asking a model to restate types it was shown is asking it to guess something we
+         * already know. An external team measured every level-4 argument rejection across
+         * two providers and two independent compiles: 77% container-type errors, 23% bad
+         * enum values, nothing else — and their compiled docstrings named 8 of 91 object
+         * and array parameters, a figure that did not improve on recompile because the
+         * prompt could not make it. Deriving the signature makes it 100% by construction
+         * and costs nothing at run time.
+         */
+        return `def ${signatureLine(t)}:"${line.slice(line.indexOf('):"') + 3, -1)}"`;
+      }
       if (problem) stale.push(`${t.name}: ${problem}`);
       // Emit something correct rather than omitting the tool, and make the mixture
       // visible in stats instead of silent.
+      //
+      // The fallback uses the same derived signature as a compiled line, not a bare list
+      // of required names. It used to emit names only, which left the one uncompiled tool
+      // in the corpus as the single shape-blind line in an otherwise complete map —
+      // `send_email_with_attachments(to,subject,body,attachments)`, where `attachments` is
+      // an array. Shape-blind lines are the measured cause of container-type rejections, so
+      // the degraded path must not reintroduce the exact defect the map exists to avoid.
       uncompiled++;
-      return `def ${t.name}(${(t.schema.required ?? []).join(",")}):"(not compiled)"`;
+      return `def ${signatureLine(t)}:"(not compiled)"`;
     }
     if (mapStyle === "signature") return `${code} ${signatureLine(t)}`;
     if (req.length) return `${code} ${t.name} ${req.join(",")}`;

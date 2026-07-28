@@ -69,6 +69,20 @@ export type CompileResult = {
    * legitimate choice for a tool with thirty optional parameters.
    */
   incompleteSignatures: { name: string; omitted: string }[];
+  /**
+   * Compiled lines whose **docstring** names none of the tool's parameters.
+   *
+   * Proposed by the team who found the 0.5.0 regression, after observing that
+   * `incompleteSignatures` would not have caught it: their compiled *signatures* listed
+   * every parameter, 0 of 60 omitted anything. The inventory went missing because
+   * `signaturePrefix: false` discards the signature and shows only the docstring — and
+   * 28 of 60 of their docstrings named no parameter at all.
+   *
+   * `incompleteSignatures` inspects the half that was never broken. This inspects the half
+   * that is all a caller sees when the prefix is off, and at level 4 where the compiled
+   * line is the entire map.
+   */
+  docstringNamesNoParameter: string[];
   stats: { total: number; compiled: number; chars: number; charsPerTool: number };
 };
 
@@ -85,9 +99,14 @@ Rules, all mandatory:
   name=None. Never invent, rename, drop or reorder a required parameter. Use None and
   never 0 — a numeric default tells the reader the parameter is a number.
 - The docstring is the whole point. In as few characters as possible say WHAT it does and
-  WHEN to reach for it instead of a similarly-named tool. If a parameter takes a fixed set
-  of values, list them as k:a|b|c. Drop articles, drop pleasantries, drop restating the
-  name. No period at the end.
+  WHEN to reach for it instead of a similarly-named tool. Drop articles, drop pleasantries,
+  drop restating the name. No period at the end.
+- DO NOT describe parameter types, shapes or allowed values. The signature is regenerated
+  from the JSON Schema before the model ever reads it, so enums arrive as k:a|b|c, arrays as
+  k:[] and objects as k:{} without your help. Restating them wastes the characters that
+  should be spent on purpose. Name a parameter only when the docstring needs to say
+  something the schema cannot — that two of them are mutually exclusive, or that one must be
+  set before another.
 - Aim for under ${maxDocChars} characters of docstring. Shorter is better if nothing is lost.
 - Output only the def lines, one per tool, no fences, no commentary, no blank lines.
 
@@ -235,6 +254,16 @@ export async function compileTools(
     if (omitted.length) incompleteSignatures.push({ name, omitted: omitted.join(", ") });
   }
 
+  const docstringNamesNoParameter: string[] = [];
+  for (const [name, line] of Object.entries(compiled)) {
+    const t = corpus.find((c) => c.name === name);
+    if (!t) continue;
+    const params = Object.keys(t.schema.properties ?? {});
+    if (!params.length) continue;
+    const docText = line.slice(line.indexOf('):"') + 3, -1);
+    if (!params.some((p) => docText.includes(p))) docstringNamesNoParameter.push(name);
+  }
+
   const chars = Object.values(compiled).join("\n").length;
   const count = Object.keys(compiled).length;
   return {
@@ -242,6 +271,7 @@ export async function compileTools(
     rejected: [...reasons].map(([name, reason]) => ({ name, reason })),
     danglingReferences,
     incompleteSignatures,
+    docstringNamesNoParameter,
     stats: {
       total: corpus.length,
       compiled: count,

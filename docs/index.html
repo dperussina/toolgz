@@ -202,7 +202,7 @@
   <figure style="margin-top:26px">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="img/metaphor-dark.svg">
-      <img src="img/metaphor-light.svg" alt="Five panels. Level 0: the full menu, 149 tools on the wire, nothing saved, the kitchen checks the order. Level 1: the same menu with prose cut, 149 tools, 45.2% smaller, kitchen still checks. Level 2: one waiter per menu section, 64 tools, 89.3% smaller, toolgz checks. Level 3: a small numbered card and one waiter, 2 tools, 96.5% smaller, toolgz checks. Level 4: the same card annotated with what each number is good for, 2 tools, 81.6% smaller, toolgz checks.">
+      <img src="img/metaphor-light.svg" alt="Five panels. Level 0: the full menu, 149 tools on the wire, nothing saved, the kitchen checks the order. Level 1: the same menu with prose cut, 149 tools, 45.1% smaller, kitchen still checks. Level 2: one waiter per menu section, 64 tools, 89.3% smaller, toolgz checks. Level 3: a small numbered card and one waiter, 2 tools, 96.5% smaller, toolgz checks. Level 4: the same card annotated with what each number is good for, 2 tools, 81.6% smaller, toolgz checks.">
     </picture>
     <figcaption>Character savings. <code>recommendLevel()</code> advises by block size, not tool
     count — <code>compress(tools)</code> is level 1 whether you have 2 tools or 500.</figcaption>
@@ -229,7 +229,9 @@
       <p>One dispatcher plus one lookup, and a compact map cached in your system prompt. Two
       tools on the wire however many you start with, for about half an extra turn. Its
       weakness is that the map is only as good as your tool names — check
-      <code>stats.ambiguousMapLines</code>.</p>
+      <code>stats.ambiguousMapLines</code>. <b>If your tools take objects or arrays, set
+      <code>mapStyle: "signature"</code></b>: the default shows parameter names without
+      shapes, and every malformed argument in a 144-run shape test landed on that arm.</p>
     </div>
     <div class="card">
       <h3>Level 4 — when names collide</h3>

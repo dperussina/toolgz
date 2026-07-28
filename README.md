@@ -64,7 +64,7 @@ are **level 3**, which is what `recommendLevel` returns once a tool set is big e
 amortise the dispatcher.
 
 Two units are in play throughout this document, and they are labelled wherever they
-appear: `savedPct` counts **characters** (45.2% at level 1 here), while every published
+appear: `savedPct` counts **characters** (45.1% at level 1 here), while every published
 headline figure is **tokens** from the provider's own counter (39.2%). Characters run a
 few points optimistic.
 
@@ -295,7 +295,7 @@ tried and removed in 0.2.0 because they were smaller and still worse.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/metaphor-dark.svg">
-  <img src="docs/img/metaphor-light.svg" alt="Three panels. Level 0: the full menu, 149 tools on the wire, nothing saved, kitchen checks the order. Level 1: the same menu with prose cut, 149 tools on the wire, 45.2% smaller, kitchen still checks the order. Level 3: a small numbered card and one waiter, 2 tools on the wire, 96.5% smaller, toolgz checks the order instead of the provider.">
+  <img src="docs/img/metaphor-light.svg" alt="Three panels. Level 0: the full menu, 149 tools on the wire, nothing saved, kitchen checks the order. Level 1: the same menu with prose cut, 149 tools on the wire, 45.1% smaller, kitchen still checks the order. Level 3: a small numbered card and one waiter, 2 tools on the wire, 96.5% smaller, toolgz checks the order instead of the provider.">
 </picture>
 
 Your tool definitions are a **menu** handed to the model at the start of every single
@@ -327,7 +327,7 @@ compress(myTools, { level });                // now it's 3, because you passed i
 ```
 
 `recommendLevel()` **advises**; it does not act. On our 149-tool corpus,
-`compress(myTools)` saves 45.2% and `compress(myTools, { level: 3 })` saves 96.5% — so
+`compress(myTools)` saves 45.1% and `compress(myTools, { level: 3 })` saves 96.5% — so
 forgetting to pass the level back in quietly leaves half the win on the table.
 
 This is deliberate. Level 3 gives up provider-side schema enforcement, and silently
@@ -454,6 +454,15 @@ Its weakness is that the map is only as good as your tool names. If many of your
 render to the same line — `manage_table operation`, `manage_rows operation` — the name is
 the only signal left and the model picks by keyword. Check `stats.ambiguousMapLines`; if it
 is high, either `mapStyle: "signature"` or level 4.
+
+> **If your tools take objects or arrays, do not use the default map style here.**
+> `name+required` shows parameter *names* and not their shapes, so the model has no way to
+> know a parameter wants `[{…}]` rather than a string. On a suite built to test exactly this,
+> **all three malformed arguments in 144 runs landed on that arm**, across three providers —
+> `Parameter "origin" on compute_route must be an object`. It also spent 0.77 lookups per run
+> against 0.08. `mapStyle: "signature"` and level 4 both render `shipments:[]` and
+> `truckSpecs:{}` from your schema and produced **zero**. Round 12 in
+> [docs/RESULTS.md](docs/RESULTS.md).
 
 #### Level 4 — a map a model compiled for you
 
@@ -1156,7 +1165,7 @@ number can be recomputed rather than trusted.
 Level 1 prepends `name(a,b?) — ` to each description while keeping the full
 `input_schema`. That prefix restates the tool name, property names, required list, enums
 and item types that the schema already carries, and it is **18.5% of the level-1
-payload** on the real corpus. Setting it `false` makes level 1 strictly smaller — 45.2%
+payload** on the real corpus. Setting it `false` makes level 1 strictly smaller — 45.1%
 → **55.3%** on 149 real tools — and removes the case where level 1 *inflates* a terse
 catalogue at all (−14.4% → −0.6%, which is level 0's own floor).
 
@@ -1188,7 +1197,7 @@ Returns:
 | `stats` | `CompressStats` | `level`, `mapStyle`, `requestedMapStyle`, `fallbackReason`, `toolCount`, `wireToolCount`, `originalChars`, `compressedChars`, `savedPct`, `ambiguousMapLines`, `largestLookalikeGroup`, `uncompiledTools`, `staleCompiledTools`, `orphanedCompiledEntries` |
 
 > **`savedPct` is a character saving, and runs a few points optimistic against tokens.**
-> On the real 149-tool corpus it reports **45.2%** at level 1 where `count_tokens` measures
+> On the real 149-tool corpus it reports **45.1%** at level 1 where `count_tokens` measures
 > **39.2%**, and **96.5%** at level 3 against **95.6%**.
 >
 > Those character figures are measured against the tool array as an MCP client hands it to

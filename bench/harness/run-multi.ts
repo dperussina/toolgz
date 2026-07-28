@@ -21,6 +21,7 @@ import { ARMS, A_VARIANTS } from "../strategies/index.js";
 import { SCENARIOS, type Scenario } from "../scenarios.js";
 import { ACCURACY_SCENARIOS } from "../scenarios-accuracy.js";
 import { REAL_SCENARIOS } from "../scenarios-real.js";
+import { SHAPE_SCENARIOS } from "../scenarios-shape.js";
 import type { CompressionStrategy } from "../core/types.js";
 import type {
   ChatMessage,
@@ -251,6 +252,8 @@ async function main() {
       ? SCENARIOS
       : suiteName === "real"
         ? REAL_SCENARIOS
+        : suiteName === "shape"
+        ? SHAPE_SCENARIOS
         : suiteName === "both"
           ? [...SCENARIOS, ...ACCURACY_SCENARIOS]
           : suiteName === "all"

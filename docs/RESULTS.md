@@ -5,7 +5,7 @@
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
 **Round 5** — same four providers, after hardening the resolver from observed failures
 **Round 6** — real MCP tools: 149 tools from 14 live servers, replacing the synthetic fixture
-**Total**: 3,791 runs across rounds 1–11, in 28 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
+**Total**: 4,031 runs across rounds 1–12, in 30 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
 **Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze-multi.ts --sweep=<timestamp>` — the `--sweep` flag is required, because pooling runs blends library versions
 
@@ -891,6 +891,10 @@ Reproduced on our corpus:
 | + compiled (0.5.0 default) | 75,004 | −16.3% | **no** |
 | + compiled + `signaturePrefix` | 91,546 | +2.2% | yes |
 
+> Figures in this table predate a later change: `signatureLine` now renders object and
+> untyped-array shapes, adding 123 characters across the corpus, so plain level 1 reads
+> 89,697 and 45.1% rather than 89,574 and 45.2%. The comparison is unaffected.
+
 **The 16% was the inventory.** No configuration keeps both — they measured
 `signaturePrefix: true` at 3.9% *dearer* than plain level 1 on their registry, and it is
 2.2% dearer here. Fixed in 0.5.1 by defaulting the prefix back on.
@@ -938,6 +942,89 @@ opaque dispatcher names are a problem for audit or logging.
 
 Note for anyone re-running their comparison on 0.5.1: their L1c arm will now measure around
 22,000 tokens rather than 17,401, because the inventory is back by default.
+
+## Round 12 — shapes derived, not guessed
+
+Sweeps `2026-07-28T03-21-16` (144 runs, the falsification test) and `2026-07-28T12-19-30`
+(96 runs, verifying the leaner map). New suite: `bench/scenarios-shape.ts`.
+
+### The question, and a suite built to answer it
+
+An external team measured every level-4 argument rejection across two providers and two
+independent compiled artifacts: **77% container-type errors, 23% bad enum values, nothing
+else.** That is a claim about the map — a parameter shown as a bare name gives the model no
+way to know it wants `[{…}]` rather than a string.
+
+Every other suite here measures tool *selection*. This one names the tool in the prompt, so
+selection is trivial and **the only way to fail is sending the wrong shape**: an array of
+objects, nested objects as coordinates, an array of arrays, three containers in one call, an
+enum value.
+
+### Falsified in the right direction
+
+144 runs, 6 scenarios × 2 reps × 4 providers × 3 arms.
+
+| arm | n | malformed | lookups/run | shapes in map? |
+|---|--:|--:|--:|:-:|
+| `compiled` (level 4) | 48 | **0** | 0.08 | yes |
+| `minified-sig` (level 3, signature) | 48 | **0** | 0.31 | yes |
+| `minified-plus` (level 3, default) | 48 | **3** | 0.77 | **no** |
+
+Every rejection landed on the one arm whose map shows no shapes, on three different
+providers:
+
+```
+gemini · compute_route   Parameter "origin" must be an object.
+xai    · compute_route   Parameter "origin" must be an object.
+openai · analyze_blob    Unknown parameter "url". Accepted: … external_url …
+```
+
+Two container-type errors and one wrong parameter name — the same two classes, in the same
+proportion. **The mechanism is confirmed.** Note also that the shape-blind arm spent
+**0.77 lookups per run against 0.08**: it was not merely riskier, it was going to ask, and
+still got three wrong.
+
+**What this does not establish:** that the fix improved *our* level 4, which was already at
+~0 malformed. There is no improvement to show against a clean baseline. What changed is that
+level 4 is now in the shapes-present group *by construction* rather than by luck.
+
+### Two mechanical gaps this exposed
+
+`signatureLine` rendered **0 of 33** object parameters with any shape marker, and 8 arrays
+with untyped items — `analyze_consolidation(shipments, truckSpecs)` for an array of objects
+and an object. `{}` and `[]` cost **123 characters across the whole corpus** and take
+coverage to 73/73 arrays and 33/33 objects. Level 1 moved 45.2% → 45.1%.
+
+The degraded path was worse: a tool that fails verification fell back to a bare list of
+required names, making it the single shape-blind line in an otherwise complete map, with an
+array among them. The fallback now derives its signature too.
+
+### Then the model stopped being asked for shapes at all
+
+Since the signature is derived, restating shapes in the docstring is pure duplication. The
+compile prompt now forbids it:
+
+| | chars | per tool | level-4 map |
+|---|--:|--:|--:|
+| prompt asks for shapes | 33,395 | 224 | 35,027 |
+| **shapes derived, prose only** | **26,762** | **181** | **28,489** |
+
+**20% off the artifact, 19% off the map**, with coverage unchanged because it no longer
+depends on the model. Verified over 96 further runs: **zero malformed arguments, zero
+rejections, 96/96 tasks.**
+
+```
+def analyze_consolidation(shipments:[],truckSpecs:{}):"group shipments by destination to find truck-fill consolidation opportunities"
+```
+
+### The verdict does not move
+
+`minified-sig` matched level 4 on argument quality — zero malformed on both — at **6,065
+average block tokens against 8,707**. The external team's recommendation of level 3 with
+`mapStyle: "signature"` over level 4 survives this round and is strengthened by it: the
+cheaper arm is equally safe.
+
+Level 4 remains the answer to ambiguity, not to argument quality.
 
 ## Findings
 
