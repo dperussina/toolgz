@@ -1087,8 +1087,9 @@ number can be recomputed rather than trusted.
 | `namespaceOf` | `(name) => {ns, op}` | split on first `_`/`.` | levels 2–4 grouping |
 | `aliasOf` | `(ns) => string` | identity | level 2 tool naming |
 | `signaturePrefix` | `boolean` | `true` | level 1 only; see below |
-| `compiled` | `Record<string, string>` | — | **experimental**, required at level 4; see below |
-| `requireCompiled` | `boolean` | `false` | **experimental**, level 4; throw instead of falling back |
+| `compiled` | `Record<string, string>` | — | required at level 4, optional at level 1; see below |
+| `requireCompiled` | `boolean` | `false` | levels 1 and 4; throw instead of falling back |
+| `enforceNames` | `boolean` | `false` | levels 3–4; `enum` the dispatcher's `f` so the sampler cannot invent a name |
 | `searchLimit` | `number` | `8` | max results from a `q` search |
 | `validate` | `boolean` | `true` | **leave this on** |
 | `model` | `string` | — | exact model id; picks the measured style. Omit and nothing changes |

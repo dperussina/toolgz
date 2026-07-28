@@ -5,7 +5,7 @@
 **Settings**: reasoning at high effort on every model that supports it, `max_tokens: 8000`
 **Round 5** — same four providers, after hardening the resolver from observed failures
 **Round 6** — real MCP tools: 149 tools from 14 live servers, replacing the synthetic fixture
-**Total**: 3,479 runs across rounds 1–8, in 19 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
+**Total**: 3,503 runs across rounds 1–9, in 26 sweeps · 2026-07-25/27 (counted from the committed JSONL, not estimated)
 *(plus 458 superseded runs, $13.88 — see `bench/results/superseded/`)*
 **Raw data**: `bench/results/*.jsonl`, committed · **Verify**: `npx tsx bench/analyze-multi.ts --sweep=<timestamp>` — the `--sweep` flag is required, because pooling runs blends library versions
 
@@ -692,6 +692,77 @@ Level 4 is behaviourally sound on this corpus: **180 runs, every task completed,
 hallucinated tool names, one recovered malformed argument.** It is still branch-only, and
 what it has not been tested against is a corpus whose descriptions are wrong — where the
 compiler would faithfully compress an untruth into something that reads authoritatively.
+
+## Round 9 — can a dispatcher have provider-side enforcement?
+
+Sweep `2026-07-28T00-12-20`, 24 runs, 3 scenarios × 4 providers × 1 rep.
+
+### The question, and the part of it that is closed
+
+Levels 2, 3 and 4 give up provider-side constrained decoding because the wire carries
+`t(f, a)` with a generic `a` — the sampler cannot enforce a schema it was not given, and
+not giving it the schema is the compression.
+
+The only construct that would express per-tool enforcement on a dispatcher is a
+discriminated union on `f`. **The Anthropic API rejects it outright:**
+
+```
+tools.0.custom.input_schema: input_schema does not support oneOf, allOf, or anyOf
+at the top level
+```
+
+Measured anyway before finding that out: **+112,488 characters**, which is more than level
+1 costs. So argument enforcement on a dispatcher is closed, on two independent grounds.
+
+### What is available: `enforceNames`
+
+Constraining `f` to an `enum` of real tool names is legal, cheap, and works at **levels 3
+and 4** because they share a dispatcher.
+
+| | tokens | enforcement |
+|---|--:|---|
+| level 4 | 12,567 | none — toolgz validates |
+| level 4 + `enforceNames` | 13,980 | tool name |
+
++1,413 tokens, about 11%. It fixes a failure we have not observed — zero hallucinated names
+in 180 runs — so what it buys is the *kind* of guarantee, not a measured improvement.
+
+### What the question actually turned up: `compiled` at level 1
+
+The compiled map was built to replace level 3's map. It is worth more on a level that keeps
+the schema, because there the docstring replaces prose without giving anything up.
+
+| | tokens | vs level 0 | enforcement |
+|---|--:|--:|---|
+| level 0 | 68,501 | — | full |
+| level 1 | 41,655 | 39.2% | full |
+| **level 1 + `compiled`** | **35,103** | **48.8%** | **full** |
+
+**16% under level 1 with provider-side enforcement completely intact.**
+
+A first attempt made it *larger* — 91,546 characters against 89,574 — because
+`signaturePrefix` defaults on and was prepending a signature alongside the docstring. The
+parameters are already in the schema directly below. The prefix now defaults off for a
+compiled line.
+
+### Behaviour, 24 runs
+
+| arm | providers | correct | hallucinated | malformed | tasks | lookups |
+|---|--:|--:|--:|--:|--:|--:|
+| `signatures-compiled` (L1 + compiled) | 4 | 12/12 | 0 | 0 | 12/12 | 0.0 |
+| `compiled-enforced` (L4 + enforceNames) | 4 | 12/12 | 0 | 0 | 12/12 | 0.0 |
+
+Clean on both, on every provider. **n=3 per cell — this is a tier-0 smoke, not proof.** It
+establishes that neither option breaks anything, not that either is better.
+
+### Standing
+
+Both are opt-in and both default off. Level 1, 3 and 4 output is byte-identical without
+them: 89,574 / 5,721 / 30,079 characters, unchanged.
+
+Open: whether `compiled` at level 1 should become a recommendation, which needs reps at
+tier 1 or above. And whether `enforceNames` is worth 11% for a guarantee against something
+that has not happened in 180 runs.
 
 ## Findings
 

@@ -306,3 +306,76 @@ describe("level 4 speaks function names everywhere, not codes", () => {
     if (r.kind === "meta") expect(r.result).toMatch(/^[a-z]+\d+\s*=/m);
   });
 });
+
+describe("compiled descriptions at level 1, and name enforcement on the dispatcher", () => {
+  /**
+   * Both came out of one question: could level 4 have provider-side enforcement?
+   *
+   * Argument enforcement: no, and not for cost reasons. It would need a discriminated
+   * union on `f`, and the Anthropic API rejects oneOf/allOf/anyOf at the top level of an
+   * input_schema outright. Measured anyway at +112,488 characters — more than level 1.
+   *
+   * What is available is narrower and more useful than expected.
+   */
+  const tools: Tool[] = [
+    { name: "article_update", description: "Replace the entire body of an existing article with new content, discarding what was there.", inputSchema: { type: "object", properties: { article_id: { type: "number" }, content: { type: "string" } }, required: ["article_id", "content"] } },
+    { name: "article_append", description: "Append content to an article without replacing what is already there.", inputSchema: { type: "object", properties: { article_id: { type: "number" }, content: { type: "string" } }, required: ["article_id", "content"] } },
+  ];
+  const compiled = {
+    article_update: `def article_update(article_id,content):"overwrite whole body; use article_append to add"`,
+    article_append: `def article_append(article_id,content):"add to end; use over article_update"`,
+  };
+
+  it("level 1 uses the compiled docstring and keeps the real schema", () => {
+    const wire = compress(tools, { level: 1, compiled }).tools as any[];
+    const t = wire.find((w) => w.name === "article_append");
+    expect(t.description).toBe("add to end; use over article_update");
+    // The whole point: enforcement survives because this is still a native tool.
+    expect(t.input_schema.properties).toHaveProperty("content");
+    expect(t.input_schema.required).toEqual(["article_id", "content"]);
+  });
+
+  it("is smaller than level 1 without it", () => {
+    const plain = compress(tools, { level: 1 }).stats.compressedChars;
+    const withMap = compress(tools, { level: 1, compiled }).stats.compressedChars;
+    expect(withMap).toBeLessThan(plain);
+  });
+
+  it("does not prepend a signature to a compiled line", () => {
+    // The first attempt did, and made level 1 LARGER than not compiling at all
+    // (91,546 chars against 89,574) — the parameters are already in the schema.
+    const t = (compress(tools, { level: 1, compiled }).tools as any[])[0];
+    expect(t.description).not.toMatch(/^article_\w+\(/);
+    // Still available if asked for.
+    const forced = (compress(tools, { level: 1, compiled, signaturePrefix: true }).tools as any[])[0];
+    expect(forced.description).toMatch(/^article_\w+\(/);
+  });
+
+  it("falls back to the tool's own prose when a compiled line is stale", () => {
+    const moved: Tool[] = JSON.parse(JSON.stringify(tools));
+    (moved[1].inputSchema as any).properties.section = { type: "string" };
+    (moved[1].inputSchema as any).required = ["article_id", "section", "content"];
+    const t = (compress(moved, { level: 1, compiled }).tools as any[]).find((w) => w.name === "article_append");
+    expect(t.description, "a stale docstring must not describe parameters that changed")
+      .toContain("Append content to an article");
+  });
+
+  it("leaves level 1 byte-identical when no map is supplied", () => {
+    const before = compress(tools, { level: 1 });
+    expect(before.stats.compressedChars).toBe(compress(tools, { level: 1, compiled: {} }).stats.compressedChars);
+  });
+
+  it("enforceNames constrains the dispatcher to real names, at levels 3 and 4", () => {
+    for (const opts of [{ level: 3 as const }, { level: 4 as const, compiled }]) {
+      const off = (compress(tools, opts).tools as any[])[0].input_schema.properties.f;
+      const on = (compress(tools, { ...opts, enforceNames: true }).tools as any[])[0].input_schema.properties.f;
+      expect(off).toEqual({ type: "string" });
+      expect(on.enum).toEqual(["article_append", "article_update"]);
+    }
+  });
+
+  it("enforceNames is off by default, so every existing caller is unchanged", () => {
+    expect((compress(tools, { level: 3 }).tools as any[])[0].input_schema.properties.f.enum).toBeUndefined();
+    expect((compress(tools, { level: 4, compiled }).tools as any[])[0].input_schema.properties.f.enum).toBeUndefined();
+  });
+});

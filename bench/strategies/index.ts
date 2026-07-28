@@ -49,6 +49,7 @@ type LibOpts = {
   mapStyle?: MapStyle;
   signaturePrefix?: boolean;
   compiled?: Record<string, string>;
+  enforceNames?: boolean;
 };
 
 /**
@@ -226,8 +227,31 @@ export const compiledPython = fromLibrary(
   { level: 4, compiled: PYTHON_MAP },
 );
 
+/**
+ * Level 1 with the compiled docstrings as descriptions.
+ *
+ * The interesting arm: provider-side enforcement is fully intact because these are
+ * ordinary native tools with real schemas, and the tool block still drops from 41,655
+ * tokens to 35,103. The question is behavioural — does a written docstring select as well
+ * as the tool's own first sentence?
+ */
+export const signaturesCompiled = fromLibrary(
+  "signatures-compiled",
+  "Arm C\u2033 · L1 with compiled descriptions",
+  { level: 1, compiled: PYTHON_MAP },
+);
+
+/** Level 4 with the dispatcher's `f` constrained to an enum of real tool names. */
+export const compiledEnforced = fromLibrary(
+  "compiled-enforced",
+  "Arm E\u2032 · level 4 + name enforcement",
+  { level: 4, compiled: PYTHON_MAP, enforceNames: true },
+);
+
 export const A_VARIANTS: CompressionStrategy[] = [
   compiledPython,
+  signaturesCompiled,
+  compiledEnforced,
   signaturesNoPrefix,
   minifiedPlus,
   minifiedSig,
@@ -245,4 +269,6 @@ export const LIBRARY_ARM_MAP: { arm: CompressionStrategy; opts: LibOpts }[] = [
   { arm: minifiedExplicit, opts: { level: 3, mapStyle: "explicit" } },
   { arm: signaturesNoPrefix, opts: { level: 1, signaturePrefix: false } },
   { arm: compiledPython, opts: { level: 4, compiled: PYTHON_MAP } },
+  { arm: signaturesCompiled, opts: { level: 1, compiled: PYTHON_MAP } },
+  { arm: compiledEnforced, opts: { level: 4, compiled: PYTHON_MAP, enforceNames: true } },
 ];

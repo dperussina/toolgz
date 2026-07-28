@@ -111,7 +111,12 @@ export type CompressOptions = {
    */
   signaturePrefix?: boolean;
   /**
-   * Pre-compiled map lines, keyed by real tool name. Required at level 4.
+   * Pre-compiled map lines, keyed by real tool name.
+   *
+   * **Required at level 4**, where it replaces the map. **Optional at level 1**, where the
+   * docstring replaces each tool's own first sentence — measured 41,655 tokens to 35,103
+   * on the real corpus with provider-side enforcement fully intact, because level 1 still
+   * sends real schemas.
    *
    * Produced offline by a model, because the library has zero runtime dependencies and
    * cannot call one itself. A tool with no entry falls back to its signature line and is
@@ -119,6 +124,21 @@ export type CompressOptions = {
    * breaks.
    */
   compiled?: Record<string, string>;
+  /**
+   * Levels 3 and 4. Constrain the dispatcher's `f` to an `enum` of your real tool names,
+   * so the provider's sampler cannot emit a function that does not exist. Default false.
+   *
+   * This is the only provider-side enforcement a dispatcher can have. Argument
+   * enforcement is not available at any price: it would need a discriminated union on
+   * `f`, and Anthropic rejects `oneOf`/`allOf`/`anyOf` at the top level of an
+   * `input_schema` outright. Measured cost of the enum on 149 tools: +1,413 tokens, about
+   * 11% of level 4.
+   *
+   * Off by default because it fixes a problem we have not measured: zero hallucinated
+   * tool names across 180 runs. What it changes is the *kind* of guarantee — from
+   * "measured zero" to "cannot happen".
+   */
+  enforceNames?: boolean;
   /**
    * Level 4 only. Throw if any tool lacks a usable compiled line, instead of falling back
    * to a bare signature for it. Default false.
